@@ -3,7 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import type { HeadingLevel, ReviewDocument } from "../../shared/types";
-import { MermaidBlock } from "./MermaidBlock";
+import { MermaidBlock } from "./mermaid/MermaidBlock";
+import { ResizableTable } from "./ResizableTable";
 
 type DocumentViewerProps = {
   document: ReviewDocument;
@@ -21,9 +22,6 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
     h5: createHeadingComponent(5, () => document.headings[headingIndex++]),
     h6: createHeadingComponent(6, () => document.headings[headingIndex++]),
     code({ className, children, ...props }) {
-      const code = String(children).replace(/\n$/, "");
-      const language = /language-(\w+)/.exec(className || "")?.[1];
-
       return (
         <code className={className} {...props}>
           {children}
@@ -48,11 +46,7 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
       return <pre>{children}</pre>;
     },
     table({ children }) {
-      return (
-        <div className="table-scroll">
-          <table>{children}</table>
-        </div>
-      );
+      return <ResizableTable>{children}</ResizableTable>;
     },
     a({ children, href }) {
       return (
