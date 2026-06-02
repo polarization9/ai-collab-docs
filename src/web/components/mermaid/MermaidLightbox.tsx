@@ -23,6 +23,7 @@ type MermaidLightboxProps = {
   svg: string;
   background: MermaidBackground;
   actions: MermaidActionHandlers;
+  initialZoom?: number;
   onClose: () => void;
 };
 
@@ -41,7 +42,15 @@ type DragState = {
   startPanY: number;
 };
 
-export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLightboxProps) {
+type ZoomResolver = (currentZoom: number) => number;
+
+export function MermaidLightbox({
+  svg,
+  background,
+  actions,
+  initialZoom = 1,
+  onClose
+}: MermaidLightboxProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const backdropRef = useRef<HTMLDivElement | null>(null);
   const svgHostRef = useRef<HTMLDivElement | null>(null);
@@ -51,6 +60,11 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
   const [zoomInput, setZoomInput] = useState("100");
 
   useLayoutEffect(() => {
+    if (!svgHostRef.current) {
+      return;
+    }
+
+    svgHostRef.current.innerHTML = svg;
     const svgElement = getLightboxSvg(svgHostRef.current);
     if (!svgElement) {
       return;
@@ -58,6 +72,9 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
 
     sanitizeSvg(svgElement);
     const originalViewBox = ensureViewBox(svgElement);
+    const zoom = clamp(initialZoom, MIN_ZOOM, MAX_ZOOM);
+    const visibleWidth = originalViewBox.width / zoom;
+    const visibleHeight = originalViewBox.height / zoom;
     svgElement.setAttribute("width", "100%");
     svgElement.setAttribute("height", "100%");
     svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
@@ -66,11 +83,16 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
     svgElement.style.maxWidth = "none";
     setView({
       originalViewBox,
-      zoom: 1,
-      panX: originalViewBox.x,
-      panY: originalViewBox.y
+      zoom,
+      panX: originalViewBox.x + (originalViewBox.width - visibleWidth) / 2,
+      panY: originalViewBox.y + (originalViewBox.height - visibleHeight) / 2
     });
-  }, [svg]);
+    return () => {
+      if (svgHostRef.current) {
+        svgHostRef.current.innerHTML = "";
+      }
+    };
+  }, [initialZoom, svg]);
 
   useLayoutEffect(() => {
     if (!view) {
@@ -109,20 +131,20 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
     }
   }, [view?.zoom]);
 
-  const zoomAt = useCallback((screenX: number, screenY: number, delta: number) => {
+  const zoomAt = useCallback((screenX: number, screenY: number, resolveNextZoom: ZoomResolver) => {
     setView((current) => {
       if (!current || !viewportRef.current) {
         return current;
       }
 
-      const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current.zoom + delta));
+      const nextZoom = clamp(resolveNextZoom(current.zoom), MIN_ZOOM, MAX_ZOOM);
       if (nextZoom === current.zoom) {
         return current;
       }
 
       const rect = viewportRef.current.getBoundingClientRect();
-      const relX = (screenX - rect.left) / rect.width;
-      const relY = (screenY - rect.top) / rect.height;
+      const relX = clamp((screenX - rect.left) / rect.width, 0, 1);
+      const relY = clamp((screenY - rect.top) / rect.height, 0, 1);
       const visibleWidth = current.originalViewBox.width / current.zoom;
       const visibleHeight = current.originalViewBox.height / current.zoom;
       const cursorX = current.panX + relX * visibleWidth;
@@ -206,22 +228,35 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
 
   const handleWheel = useCallback(
     (event: WheelEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
       const target = event.target;
       const isInViewport = target instanceof Node && viewportRef.current?.contains(target);
+      const isZoomInput = target instanceof Element && target.closest(".mermaid-zoom-indicator");
+      const isZoomGesture = event.ctrlKey || event.metaKey;
 
-      if (event.ctrlKey || event.metaKey) {
-        const delta = event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+      if (isZoomInput) {
+        if (isZoomGesture) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
+      if (!isZoomGesture && !isInViewport) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (isZoomGesture) {
+        const factor = getWheelZoomFactor(event);
         if (isInViewport) {
-          zoomAt(event.clientX, event.clientY, delta);
+          zoomAt(event.clientX, event.clientY, (currentZoom) => currentZoom * factor);
         } else {
-          zoomFromCenter(zoomAt, delta, viewportRef);
+          zoomFromCenter(zoomAt, (currentZoom) => currentZoom * factor, viewportRef);
         }
       } else {
-        if (isInViewport) {
-          panBy(event.deltaX, event.deltaY);
-        }
+        panBy(event.deltaX, event.deltaY);
       }
     },
     [panBy, zoomAt]
@@ -254,13 +289,13 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
         event.preventDefault();
         const rect = viewportRef.current?.getBoundingClientRect();
         if (rect) {
-          zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, ZOOM_STEP);
+          zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, (currentZoom) => currentZoom + ZOOM_STEP);
         }
       } else if (event.key === "-") {
         event.preventDefault();
         const rect = viewportRef.current?.getBoundingClientRect();
         if (rect) {
-          zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, -ZOOM_STEP);
+          zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, (currentZoom) => currentZoom - ZOOM_STEP);
         }
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -329,10 +364,10 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
         <div className="mermaid-lightbox-topbar">
           <div className="mermaid-lightbox-title">Mermaid Diagram</div>
           <div className="mermaid-lightbox-actions">
-            <IconButton label="缩小" onClick={() => zoomFromCenter(zoomAt, -ZOOM_STEP, viewportRef)}>
+            <IconButton label="缩小" onClick={() => zoomFromCenter(zoomAt, (currentZoom) => currentZoom - ZOOM_STEP, viewportRef)}>
               <Minus size={16} />
             </IconButton>
-            <IconButton label="放大" onClick={() => zoomFromCenter(zoomAt, ZOOM_STEP, viewportRef)}>
+            <IconButton label="放大" onClick={() => zoomFromCenter(zoomAt, (currentZoom) => currentZoom + ZOOM_STEP, viewportRef)}>
               <Plus size={16} />
             </IconButton>
             <IconButton label="重置视图" onClick={resetView}>
@@ -407,7 +442,6 @@ export function MermaidLightbox({ svg, background, actions, onClose }: MermaidLi
           <div
             className="mermaid-lightbox-svg"
             ref={svgHostRef}
-            dangerouslySetInnerHTML={{ __html: svg }}
           />
           {view ? (
             <MermaidMinimap
@@ -490,15 +524,26 @@ function getLightboxSvg(host: HTMLDivElement | null): SVGSVGElement | null {
 }
 
 function zoomFromCenter(
-  zoomAt: (screenX: number, screenY: number, delta: number) => void,
-  delta: number,
+  zoomAt: (screenX: number, screenY: number, resolveNextZoom: ZoomResolver) => void,
+  resolveNextZoom: ZoomResolver,
   viewportRef: React.RefObject<HTMLDivElement | null>
 ): void {
   const rect = viewportRef.current?.getBoundingClientRect();
   if (!rect) {
     return;
   }
-  zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, delta);
+  zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, resolveNextZoom);
+}
+
+function getWheelZoomFactor(event: WheelEvent): number {
+  const normalizedDelta =
+    event.deltaMode === 1
+      ? event.deltaY * 16
+      : event.deltaMode === 2
+        ? event.deltaY * 800
+        : event.deltaY;
+
+  return clamp(Math.exp(-normalizedDelta * 0.0025), 0.72, 1.38);
 }
 
 function clampPan(view: ViewState, zoom: number, panX: number, panY: number) {

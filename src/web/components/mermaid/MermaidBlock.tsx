@@ -1,5 +1,5 @@
 import mermaid, { type MermaidConfig } from "mermaid";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MermaidContextMenu } from "./MermaidContextMenu";
 import { MermaidLightbox } from "./MermaidLightbox";
 import { MermaidToolbar } from "./MermaidToolbar";
@@ -46,6 +46,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
     return cachedSvg ? { status: "ready", svg: cachedSvg } : { status: "rendering" };
   });
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [lightboxInitialZoom, setLightboxInitialZoom] = useState(1);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
@@ -53,6 +54,11 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
   const renderIdRef = useRef(
     `mermaid-${documentId}-${index}-${Math.random().toString(36).slice(2)}`
   );
+
+  const openLightbox = useCallback((initialZoom = 1) => {
+    setLightboxInitialZoom(initialZoom);
+    setIsLightboxOpen(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,12 +112,12 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
 
       event.preventDefault();
       event.stopPropagation();
-      setIsLightboxOpen(true);
+      openLightbox(getInlinePinchInitialZoom(event));
     };
 
     block.addEventListener("wheel", handleInlinePinch, { passive: false });
     return () => block.removeEventListener("wheel", handleInlinePinch);
-  }, [state.status]);
+  }, [openLightbox, state.status]);
 
   useEffect(() => {
     return () => {
@@ -150,7 +156,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
   const actions: MermaidActionHandlers = useMemo(
     () => ({
       openLightbox: () => {
-        setIsLightboxOpen(true);
+        openLightbox();
       },
       copySource: () => {
         void runAction("复制成功", () => copyMermaidSource(code));
@@ -175,7 +181,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
       },
       toggleBackground
     }),
-    [code, pngBackground]
+    [code, openLightbox, pngBackground]
   );
 
   if (state.status === "error") {
@@ -198,7 +204,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
       <figure
         ref={blockRef}
         className={`mermaid-block mermaid-bg-${visualBackground}`}
-        onClick={() => setIsLightboxOpen(true)}
+        onClick={() => openLightbox()}
         onContextMenu={(event) => {
           event.preventDefault();
           setContextMenu({ x: event.clientX, y: event.clientY });
@@ -221,6 +227,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
           svg={state.svg}
           background={visualBackground}
           actions={actions}
+          initialZoom={lightboxInitialZoom}
           onClose={() => setIsLightboxOpen(false)}
         />
       ) : null}
@@ -233,6 +240,18 @@ function getSystemTheme(): MermaidBackground {
     window.matchMedia?.("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
+}
+
+function getInlinePinchInitialZoom(event: WheelEvent): number {
+  const normalizedDelta =
+    event.deltaMode === 1
+      ? event.deltaY * 16
+      : event.deltaMode === 2
+        ? event.deltaY * 800
+        : event.deltaY;
+  const factor = Math.exp(-normalizedDelta * 0.0025);
+
+  return factor > 1 ? Math.min(Math.max(factor, 1.15), 1.8) : 1;
 }
 
 function renderMermaidDiagram(id: string, code: string, config: MermaidConfig) {
