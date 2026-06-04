@@ -1,5 +1,7 @@
 import mermaid, { type MermaidConfig } from "mermaid";
+import { Image as ImageIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CodeBlock } from "../CodeBlock";
 import { MermaidContextMenu } from "./MermaidContextMenu";
 import { MermaidLightbox } from "./MermaidLightbox";
 import { MermaidToolbar } from "./MermaidToolbar";
@@ -25,6 +27,7 @@ type MermaidBlockProps = {
   code: string;
   documentId: string;
   index: number;
+  reviewBlockProps?: Record<string, string>;
 };
 
 type ContextMenuState = {
@@ -34,8 +37,9 @@ type ContextMenuState = {
 
 let mermaidRenderQueue: Promise<unknown> = Promise.resolve();
 
-export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
+export function MermaidBlock({ code, documentId, index, reviewBlockProps }: MermaidBlockProps) {
   const [background, setBackground] = useState<MermaidBackground>(() => getSystemTheme());
+  const [viewMode, setViewMode] = useState<"diagram" | "source">("diagram");
   const themeKey = background;
   const visualBackground = background;
   const pngBackground: PngExportOptions["background"] =
@@ -97,11 +101,11 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
     if (svg) {
       applyAutoFit(svg);
     }
-  }, [state]);
+  }, [state, viewMode]);
 
   useEffect(() => {
     const block = blockRef.current;
-    if (!block || state.status !== "ready") {
+    if (!block || state.status !== "ready" || viewMode !== "diagram") {
       return;
     }
 
@@ -117,7 +121,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
 
     block.addEventListener("wheel", handleInlinePinch, { passive: false });
     return () => block.removeEventListener("wheel", handleInlinePinch);
-  }, [openLightbox, state.status]);
+  }, [openLightbox, state.status, viewMode]);
 
   useEffect(() => {
     return () => {
@@ -158,6 +162,9 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
       openLightbox: () => {
         openLightbox();
       },
+      showSource: () => {
+        setViewMode("source");
+      },
       copySource: () => {
         void runAction("复制成功", () => copyMermaidSource(code));
       },
@@ -184,24 +191,50 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
     [code, openLightbox, pngBackground]
   );
 
+  if (viewMode === "source") {
+    return (
+      <CodeBlock
+        code={code}
+        language="mermaid"
+        className="language-mermaid"
+        reviewBlockProps={reviewBlockProps}
+        extraActions={[
+          {
+            label: "切回图片",
+            icon: <ImageIcon size={15} />,
+            onClick: () => setViewMode("diagram")
+          }
+        ]}
+      />
+    );
+  }
+
   if (state.status === "error") {
     return (
       <figure className="mermaid-block mermaid-block-error">
         <figcaption>{state.message}</figcaption>
-        <pre>
-          <code>{code}</code>
-        </pre>
+        <CodeBlock
+          code={code}
+          language="mermaid"
+          className="language-mermaid"
+          reviewBlockProps={reviewBlockProps}
+        />
       </figure>
     );
   }
 
   if (state.status === "rendering") {
-    return <figure className="mermaid-block mermaid-block-loading">Rendering diagram...</figure>;
+    return (
+      <figure {...reviewBlockProps} className="mermaid-block mermaid-block-loading">
+        Rendering diagram...
+      </figure>
+    );
   }
 
   return (
     <>
       <figure
+        {...reviewBlockProps}
         ref={blockRef}
         className={`mermaid-block mermaid-bg-${visualBackground}`}
         onClick={() => openLightbox()}
@@ -281,6 +314,9 @@ const baseMermaidConfig: MermaidConfig = {
   startOnLoad: false,
   securityLevel: "strict",
   theme: "base",
+  flowchart: {
+    htmlLabels: false
+  },
   fontFamily:
     "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 };

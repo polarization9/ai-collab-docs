@@ -1,4 +1,5 @@
 import {
+  Code2,
   ClipboardCopy,
   FileImage,
   Image,
@@ -18,6 +19,9 @@ export function MermaidToolbar({ actions, background }: MermaidToolbarProps) {
     <div className="mermaid-toolbar" aria-label="Mermaid diagram tools">
       <ToolbarButton label="打开大图" onClick={actions.openLightbox}>
         <Maximize2 size={15} />
+      </ToolbarButton>
+      <ToolbarButton label="查看源码" onClick={actions.showSource}>
+        <Code2 size={15} />
       </ToolbarButton>
       <ToolbarButton label="复制源码" onClick={actions.copySource}>
         <ClipboardCopy size={15} />

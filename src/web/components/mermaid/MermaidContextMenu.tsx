@@ -1,4 +1,5 @@
 import {
+  Code2,
   ClipboardCopy,
   FileImage,
   Image,
@@ -46,6 +47,9 @@ export function MermaidContextMenu({ x, y, actions, onClose }: MermaidContextMen
     >
       <MenuButton label="打开大图" onClick={() => runAction(actions.openLightbox)}>
         <Maximize2 size={15} />
+      </MenuButton>
+      <MenuButton label="查看源码" onClick={() => runAction(actions.showSource)}>
+        <Code2 size={15} />
       </MenuButton>
       <MenuButton label="复制源码" onClick={() => runAction(actions.copySource)}>
         <ClipboardCopy size={15} />

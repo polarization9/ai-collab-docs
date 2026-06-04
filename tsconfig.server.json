@@ -15,5 +15,5 @@
     "sourceMap": true,
     "noEmitOnError": true
   },
-  "include": ["src/cli.ts", "src/server/**/*.ts", "src/shared/**/*.ts"]
+  "include": ["src/cli.ts", "src/mcpCli.ts", "src/server/**/*.ts", "src/mcp/**/*.ts", "src/shared/**/*.ts"]
 }

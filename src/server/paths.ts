@@ -39,6 +39,11 @@ export function getReviewPath(absolutePath: string): string {
   return path.join(parsed.dir, `${parsed.name}.review.json`);
 }
 
+export function getCodexLinkPath(absolutePath: string): string {
+  const parsed = path.parse(absolutePath);
+  return path.join(parsed.dir, `${parsed.name}.codex.json`);
+}
+
 export function getDocumentId(absolutePath: string): string {
   const hash = crypto.createHash("sha1").update(absolutePath).digest("hex").slice(0, 8);
   return `doc_${hash}`;
