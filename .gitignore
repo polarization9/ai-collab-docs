@@ -1,5 +1,9 @@
 node_modules/
 dist/
 artifacts/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+src-tauri/resources/node/
 .DS_Store
 npm-debug.log*

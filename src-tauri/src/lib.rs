@@ -1,0 +1,317 @@
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+    sync::Mutex,
+    time::Duration,
+};
+
+use serde::Deserialize;
+use tauri::{
+    AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder,
+};
+use tauri_plugin_shell::{process::CommandEvent, process::CommandChild, ShellExt};
+use uuid::Uuid;
+
+struct OpenedFiles(Mutex<Vec<String>>);
+
+struct DesktopState {
+    token: String,
+    server_url: Mutex<Option<String>>,
+    server_child: Mutex<Option<CommandChild>>,
+}
+
+impl DesktopState {
+    fn new() -> Self {
+        Self {
+            token: Uuid::new_v4().to_string(),
+            server_url: Mutex::new(None),
+            server_child: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ServerReadyMessage {
+    #[serde(rename = "type")]
+    kind: String,
+    url: String,
+}
+
+#[tauri::command]
+fn opened_files(app: AppHandle) -> Vec<String> {
+    let state = app.state::<OpenedFiles>();
+    let mut files = state.0.lock().expect("opened files lock poisoned");
+    let opened = files.clone();
+    files.clear();
+    opened
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let paths = args
+                .iter()
+                .filter_map(|arg| normalize_opened_file_arg(arg))
+                .collect::<Vec<_>>();
+
+            if !paths.is_empty() {
+                push_opened_files(app, paths);
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
+        .manage(OpenedFiles(Mutex::new(Vec::new())))
+        .manage(DesktopState::new())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .invoke_handler(tauri::generate_handler![opened_files])
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            let startup_paths = std::env::args()
+                .filter_map(|arg| normalize_opened_file_arg(&arg))
+                .collect::<Vec<_>>();
+            let startup_document = startup_paths.first().cloned();
+            if !startup_paths.is_empty() {
+                push_opened_files(&app_handle, startup_paths);
+            }
+            start_reviewer_server(app_handle, startup_document)?;
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building Tauri application")
+        .run(|app, event| match event {
+            RunEvent::Opened { urls } => {
+                let paths = urls
+                    .into_iter()
+                    .filter_map(|url| url.to_file_path().ok())
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>();
+                if !paths.is_empty() {
+                    push_opened_files(app, paths);
+                }
+            }
+            RunEvent::ExitRequested { .. } => {
+                let state = app.state::<DesktopState>();
+                let child = {
+                    let mut guard = state
+                        .server_child
+                        .lock()
+                        .expect("server child lock poisoned");
+                    guard.take()
+                };
+                if let Some(child) = child {
+                    let _ = child.kill();
+                }
+            }
+            _ => {}
+        });
+}
+
+fn start_reviewer_server(app: AppHandle, startup_document: Option<String>) -> tauri::Result<()> {
+    let token = app.state::<DesktopState>().token.clone();
+    let mut args = vec![
+        "--desktop-server".to_string(),
+        "--port".to_string(),
+        "0".to_string(),
+        "--no-open".to_string(),
+        "--desktop-token".to_string(),
+        token.clone(),
+    ];
+    if let Some(document) = startup_document {
+        args.push("--document".to_string());
+        args.push(document);
+    }
+
+    let sidecar = app
+        .shell()
+        .sidecar("ai-md-reviewer-server")
+        .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?
+        .args(args);
+
+    let (mut rx, child) = sidecar
+        .spawn()
+        .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?;
+    app.state::<DesktopState>()
+        .server_child
+        .lock()
+        .expect("server child lock poisoned")
+        .replace(child);
+
+    tauri::async_runtime::spawn(async move {
+        let mut stdout_buffer = String::new();
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(bytes) => {
+                    stdout_buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    process_stdout_buffer(&app, &mut stdout_buffer);
+                }
+                CommandEvent::Stderr(bytes) => {
+                    eprint!("{}", String::from_utf8_lossy(&bytes));
+                }
+                _ => {}
+            }
+        }
+    });
+
+    Ok(())
+}
+
+fn process_stdout_buffer(app: &AppHandle, buffer: &mut String) {
+    while let Some(index) = buffer.find('\n') {
+        let line = buffer[..index].trim().to_string();
+        *buffer = buffer[index + 1..].to_string();
+
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Ok(message) = serde_json::from_str::<ServerReadyMessage>(&line) {
+            if message.kind == "server-ready" {
+                let _ = open_main_window(app, &message.url);
+            }
+        } else {
+            println!("{line}");
+        }
+    }
+}
+
+fn open_main_window(app: &AppHandle, server_url: &str) -> tauri::Result<()> {
+    let state = app.state::<DesktopState>();
+    *state
+        .server_url
+        .lock()
+        .expect("server url lock poisoned") = Some(server_url.to_string());
+
+    let pending_paths = app
+        .state::<OpenedFiles>()
+        .0
+        .lock()
+        .expect("opened files lock poisoned")
+        .clone();
+    sync_opened_files_to_server(app, pending_paths, false);
+
+    let url = format!("{}/?desktopToken={}", server_url, state.token);
+    if let Some(window) = app.get_webview_window("main") {
+        window.eval(&format!("window.location.href = {}", json_string(&url)))?;
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        "main",
+        WebviewUrl::External(Url::parse(&url).expect("invalid reviewer server URL")),
+    )
+    .title("Margent")
+    .inner_size(1280.0, 860.0)
+    .min_inner_size(960.0, 640.0)
+    .build()?;
+
+    Ok(())
+}
+
+fn push_opened_files(app: &AppHandle, paths: Vec<String>) {
+    app.state::<OpenedFiles>()
+        .0
+        .lock()
+        .expect("opened files lock poisoned")
+        .extend(paths.clone());
+    sync_opened_files_to_server(app, paths.clone(), true);
+    let _ = app.emit("desktop-open-files", paths);
+}
+
+fn sync_opened_files_to_server(app: &AppHandle, paths: Vec<String>, reload_after_sync: bool) {
+    let Some(path) = paths.first().cloned() else {
+        return;
+    };
+
+    let state = app.state::<DesktopState>();
+    let server_url = state
+        .server_url
+        .lock()
+        .expect("server url lock poisoned")
+        .clone();
+    let token = state.token.clone();
+    let Some(server_url) = server_url else {
+        return;
+    };
+    let app_handle = app.clone();
+
+    std::thread::spawn(move || {
+        if let Err(error) = post_open_document(&server_url, &token, &path) {
+            eprintln!("failed to sync opened document: {error}");
+            return;
+        }
+
+        if reload_after_sync {
+            reload_main_window(&app_handle);
+        }
+    });
+}
+
+fn reload_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval("window.location.reload()");
+        let _ = window.set_focus();
+    }
+}
+
+fn post_open_document(server_url: &str, token: &str, path: &str) -> std::io::Result<()> {
+    let url = Url::parse(server_url).map_err(std::io::Error::other)?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| std::io::Error::other("reviewer server URL has no host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| std::io::Error::other("reviewer server URL has no port"))?;
+    let endpoint = format!("{}/api/session/document", url.path().trim_end_matches('/'));
+    let body = serde_json::json!({ "path": path }).to_string();
+    let request = format!(
+        "POST {endpoint} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-AI-MD-Reviewer-Token: {token}\r\nConnection: close\r\n\r\n{body}",
+        body.as_bytes().len()
+    );
+    let mut stream = TcpStream::connect((host, port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    stream.write_all(request.as_bytes())?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    if !response.starts_with("HTTP/1.1 2") && !response.starts_with("HTTP/1.0 2") {
+        return Err(std::io::Error::other(
+            response.lines().next().unwrap_or("document open request failed"),
+        ));
+    }
+
+    Ok(())
+}
+
+fn normalize_opened_file_arg(arg: &str) -> Option<String> {
+    if arg.starts_with("file://") {
+        return Url::parse(arg)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+            .map(|path| path.to_string_lossy().to_string());
+    }
+
+    if arg.ends_with(".md") || arg.ends_with(".markdown") {
+        return Some(arg.to_string());
+    }
+
+    None
+}
+
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).expect("failed to JSON encode string")
+}
