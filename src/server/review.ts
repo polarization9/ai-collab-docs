@@ -28,6 +28,7 @@ const ACTIVE_EVENT_STATUSES = new Set<ReviewEventDeliveryStatus>([
   "sent",
   "processing"
 ]);
+const STALE_DELIVERING_EVENT_MS = 120000;
 const OPEN_EVENT_STATUSES = new Set<ReviewEventDeliveryStatus>([
   "queued",
   "delivering",
@@ -286,6 +287,35 @@ export async function markReviewEventDelivering(
     lastAttemptAt: now
   };
   review.updatedAt = now;
+  return saveReviewFile(markdownPath, review);
+}
+
+export async function recoverStaleDeliveringEvents(markdownPath: string): Promise<ReviewFile> {
+  const review = await loadReviewFile(markdownPath);
+  const now = Date.now();
+  const updatedAt = new Date(now).toISOString();
+  let didChange = false;
+
+  for (const event of review.events ?? []) {
+    if (
+      event.deliveryStatus !== "delivering" ||
+      event.delivery?.turnId ||
+      now - new Date(event.updatedAt).getTime() < STALE_DELIVERING_EVENT_MS
+    ) {
+      continue;
+    }
+
+    event.deliveryStatus = "queued";
+    event.lastError = "Previous delivery attempt did not finish before the App restarted.";
+    event.updatedAt = updatedAt;
+    didChange = true;
+  }
+
+  if (!didChange) {
+    return review;
+  }
+
+  review.updatedAt = updatedAt;
   return saveReviewFile(markdownPath, review);
 }
 

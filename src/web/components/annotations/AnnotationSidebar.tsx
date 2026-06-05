@@ -21,6 +21,7 @@ import type {
   AnnotationStatus,
   ReviewAnnotation,
   ReviewEvent,
+  ReviewEventDeliveryStatus,
   ReviewReply,
   UpdateAnnotationRequest,
   UpdateReplyRequest
@@ -226,20 +227,8 @@ function AnnotationCodexStatus({
   const [isBusy, setIsBusy] = useState(false);
   const connection = codexLink?.connection;
   const autoEnabled = Boolean(connection?.autoSendNewAnnotations);
-  const statusLabel = error
-    ? "连接状态异常"
-    : !codexLink
-      ? "连接状态加载中"
-      : connection?.hasTarget
-        ? connection.targetType === "successor"
-          ? "已配置接续对话"
-          : "已关联来源会话"
-        : "未关联来源会话";
-  const detail = connection?.hasTarget
-    ? autoEnabled
-      ? "自动监控已开启"
-      : "未开启自动监控"
-    : "可复制指令到 Codex 对话中连接";
+  const view = getCodexRouteView(codexLink, error);
+  const copyInstructionLabel = connection?.hasTarget ? "复制接续指令" : "复制连接指令";
 
   const run = async (action: () => Promise<void>) => {
     if (isBusy) {
@@ -254,31 +243,99 @@ function AnnotationCodexStatus({
   };
 
   return (
-    <section className="annotation-codex-card" aria-label="Codex 连接状态">
-      <div className="annotation-codex-copy">
-        <span>Codex</span>
-        <strong>{statusLabel}</strong>
-        <small>{error ?? detail}</small>
+    <section
+      className={`annotation-codex-route annotation-codex-route-${view.tone}`}
+      aria-label="Codex 连接状态"
+    >
+      <div className="annotation-codex-route-main">
+        <span className="annotation-codex-route-dot" aria-hidden="true" />
+        <div className="annotation-codex-route-copy">
+          <strong>{view.label}</strong>
+          <small title={view.threadTitle}>{view.detail}</small>
+        </div>
       </div>
-      <div className="annotation-codex-actions">
+
+      <div className="annotation-codex-route-actions">
+        {connection?.hasTarget ? (
+          <button
+            type="button"
+            className={`annotation-codex-monitor${autoEnabled ? " annotation-codex-monitor-on" : ""}`}
+            role="switch"
+            aria-checked={autoEnabled}
+            aria-label={autoEnabled ? "关闭自动监控" : "开启自动监控"}
+            title={autoEnabled ? "关闭自动监控" : "开启自动监控"}
+            disabled={isBusy}
+            onClick={() => run(() => onToggleAutoMonitor(!autoEnabled))}
+          >
+            <span className="annotation-codex-switch" aria-hidden="true">
+              <span />
+            </span>
+            <span>自动</span>
+          </button>
+        ) : null}
         <button
           type="button"
-          disabled={isBusy || !connection?.hasTarget}
-          onClick={() => run(() => onToggleAutoMonitor(!autoEnabled))}
-        >
-          {autoEnabled ? "关闭监控" : "开启监控"}
-        </button>
-        <button
-          type="button"
-          disabled={isBusy}
+          className="annotation-codex-route-button"
+          aria-label={copyInstructionLabel}
+          title={copyInstructionLabel}
+          data-tooltip={copyInstructionLabel}
+          disabled={isBusy || (!codexLink && !error)}
           onClick={() => run(onCopySuccessorInstruction)}
         >
-          <Link2 size={13} />
-          接续指令
+          <Link2 size={14} />
         </button>
       </div>
     </section>
   );
+}
+
+function getCodexRouteView(codexLink: CodexLinkResponse | null, error?: string | null) {
+  if (error) {
+    return {
+      tone: "error",
+      label: "状态读取失败",
+      detail: error,
+      threadTitle: error
+    };
+  }
+
+  if (!codexLink) {
+    return {
+      tone: "checking",
+      label: "检查会话关联",
+      detail: "正在读取本地连接",
+      threadTitle: "正在读取本地连接"
+    };
+  }
+
+  const { connection, link } = codexLink;
+  const target = link?.target;
+  const threadId = target?.threadId ?? link?.source?.threadId ?? "";
+  const threadLabel = threadId ? ` · ${formatThreadId(threadId)}` : "";
+  const threadTitle = threadId ? `Codex thread: ${threadId}` : "";
+
+  if (!connection.hasTarget) {
+    return {
+      tone: "unlinked",
+      label: "未关联会话",
+      detail: "批注仅保存在本地",
+      threadTitle: "批注仅保存在本地"
+    };
+  }
+
+  const label = connection.targetType === "successor" ? "接续会话" : "来源会话";
+  const mode = connection.autoSendNewAnnotations ? "自动监控中" : "手动投递";
+
+  return {
+    tone: connection.autoSendNewAnnotations ? "auto" : connection.targetType ?? "source",
+    label,
+    detail: `${mode}${threadLabel}`,
+    threadTitle: threadTitle || `${label} · ${mode}`
+  };
+}
+
+function formatThreadId(threadId: string) {
+  return threadId.length > 10 ? `${threadId.slice(0, 10)}...` : threadId;
 }
 
 type AnnotationCardProps = {
@@ -311,6 +368,51 @@ function getLatestAnnotationEvent(events: ReviewEvent[], annotationId: string): 
           new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
       )[0] ?? null
   );
+}
+
+type AnnotationEventBadge = {
+  label: string;
+  title: string;
+  tone: Exclude<ReviewEventDeliveryStatus, "ignored">;
+};
+
+function getAnnotationEventBadge(event: ReviewEvent | null): AnnotationEventBadge | null {
+  switch (event?.deliveryStatus) {
+    case "queued":
+      return {
+        label: "待投递",
+        title: "已进入 Codex 队列，等待投递",
+        tone: "queued"
+      };
+    case "delivering":
+      return {
+        label: "等待会话",
+        title: "正在等待 Codex 会话可接收任务",
+        tone: "delivering"
+      };
+    case "sent":
+    case "processing":
+      return {
+        label: "Codex 处理中",
+        title: "Codex 已收到任务，正在等待处理完成",
+        tone: "processing"
+      };
+    case "handled":
+      return {
+        label: "已处理",
+        title: "Codex 已完成这条批注的处理",
+        tone: "handled"
+      };
+    case "failed":
+      return {
+        label: "未投递",
+        title: "投递失败，可以重试",
+        tone: "failed"
+      };
+    case "ignored":
+    default:
+      return null;
+  }
 }
 
 type ReplyTargetDraft = {
@@ -353,6 +455,7 @@ function AnnotationCard({
   const shouldExpand =
     isSelected && (isReplying || annotation.replies.length > 0 || localError);
   const hasFailedEvent = event?.deliveryStatus === "failed";
+  const eventBadge = getAnnotationEventBadge(event);
 
   useEffect(() => {
     setAnnotationDraft(annotation.body);
@@ -500,11 +603,20 @@ function AnnotationCard({
           className="annotation-card-main annotation-card-main-editing"
           onSubmit={submitAnnotationEdit}
         >
-          <span className={`annotation-status annotation-status-${annotation.status}`}>
-            {annotation.status === "open" ? <CircleDot size={13} /> : <CheckCircle2 size={13} />}
-            {annotation.status === "open" ? "未解决" : "已解决"}
+          <span className="annotation-card-status-row">
+            <span className={`annotation-status annotation-status-${annotation.status}`}>
+              {annotation.status === "open" ? <CircleDot size={13} /> : <CheckCircle2 size={13} />}
+              {annotation.status === "open" ? "未解决" : "已解决"}
+            </span>
+            {eventBadge ? (
+              <span
+                className={`annotation-event-badge annotation-event-badge-${eventBadge.tone}`}
+                title={eventBadge.title}
+              >
+                {eventBadge.label}
+              </span>
+            ) : null}
           </span>
-          {hasFailedEvent ? <span className="annotation-event-failed">未投递</span> : null}
           <textarea
             className="annotation-card-body-editor"
             value={annotationDraft}
@@ -530,11 +642,20 @@ function AnnotationCard({
           className="annotation-card-main"
           onClick={() => onSelect(annotation.id)}
         >
-          <span className={`annotation-status annotation-status-${annotation.status}`}>
-            {annotation.status === "open" ? <CircleDot size={13} /> : <CheckCircle2 size={13} />}
-            {annotation.status === "open" ? "未解决" : "已解决"}
+          <span className="annotation-card-status-row">
+            <span className={`annotation-status annotation-status-${annotation.status}`}>
+              {annotation.status === "open" ? <CircleDot size={13} /> : <CheckCircle2 size={13} />}
+              {annotation.status === "open" ? "未解决" : "已解决"}
+            </span>
+            {eventBadge ? (
+              <span
+                className={`annotation-event-badge annotation-event-badge-${eventBadge.tone}`}
+                title={eventBadge.title}
+              >
+                {eventBadge.label}
+              </span>
+            ) : null}
           </span>
-          {hasFailedEvent ? <span className="annotation-event-failed">未投递</span> : null}
           <span className="annotation-card-body">{annotation.body}</span>
           <span className="annotation-card-meta">
             {annotation.replies.length} 条回复 · {formatTime(annotation.updatedAt)}

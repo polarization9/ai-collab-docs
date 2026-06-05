@@ -10,12 +10,17 @@ import {
   useState
 } from "react";
 import { parseHeadingLocations, parseHeadings } from "../../../shared/markdownHeadings";
-import type { ReviewAnchor, ReviewFile } from "../../../shared/reviewTypes";
+import type {
+  ReviewAnchor,
+  ReviewEventDeliveryStatus,
+  ReviewFile
+} from "../../../shared/reviewTypes";
 import type { CodexLinkResponse } from "../../../shared/codexTypes";
 import type { Heading, ReviewDocument } from "../../../shared/types";
 import {
   createSuccessorInstruction,
   fetchCodexLink,
+  fetchDocument,
   retryReviewEvent,
   saveDocument,
   sendAnnotationToCodex,
@@ -41,6 +46,13 @@ const MarkdownSourceEditor = lazy(() =>
   }))
 );
 
+const AUTO_REVIEW_POLL_STATUSES = new Set<ReviewEventDeliveryStatus>([
+  "queued",
+  "delivering",
+  "sent",
+  "processing"
+]);
+
 type AnnotationWorkspaceProps = {
   document: ReviewDocument;
   initialReview?: ReviewFile | null;
@@ -56,6 +68,12 @@ type SwitchAnchor = {
   markdownOffset?: number;
 };
 
+function hasAutoReviewPollEvents(review: ReviewFile | null | undefined): boolean {
+  return Boolean(
+    review?.events?.some((event) => AUTO_REVIEW_POLL_STATUSES.has(event.deliveryStatus))
+  );
+}
+
 export function AnnotationWorkspace({
   document,
   initialReview = null,
@@ -66,9 +84,13 @@ export function AnnotationWorkspace({
   const editorRef = useRef<MarkdownSourceEditorHandle | null>(null);
   const pendingEditorAnchorRef = useRef<SwitchAnchor | null>(null);
   const pendingReadingAnchorRef = useRef<SwitchAnchor | null>(null);
+  const latestReviewRef = useRef<ReviewFile | null>(
+    initialReview?.documentId === document.id ? initialReview : null
+  );
+  const pendingDocumentRefreshRef = useRef(false);
   const [draft, setDraft] = useState<AnnotationDraft | null>(null);
   const [editorAnnotationDraft, setEditorAnnotationDraft] = useState<AnnotationDraft | null>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editorDraft, setEditorDraft] = useState(document.content);
   const [editorBaseContent, setEditorBaseContent] = useState(document.content);
@@ -84,6 +106,18 @@ export function AnnotationWorkspace({
     () => (review.state.status === "ready" ? review.state.review.annotations : []),
     [review.state]
   );
+  const hasPendingReviewEvents = useMemo(
+    () =>
+      review.state.status === "ready" &&
+      hasAutoReviewPollEvents(review.state.review),
+    [review.state]
+  );
+
+  useEffect(() => {
+    if (review.state.status === "ready") {
+      latestReviewRef.current = review.state.review;
+    }
+  }, [review.state]);
 
   useEffect(() => {
     if (!isEditing || !isDirty) {
@@ -126,6 +160,47 @@ export function AnnotationWorkspace({
     }
   }, []);
 
+  const reloadDocumentFromDisk = useCallback(async () => {
+    try {
+      onDocumentChange(await fetchDocument());
+    } catch {
+      // Keep the current document visible; explicit user actions still surface load errors.
+    }
+  }, [onDocumentChange]);
+
+  const isInteractingWithDocument = useCallback(() => {
+    if (isEditing || isDirty || draft || editorAnnotationDraft) {
+      return true;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return false;
+    }
+
+    const container = contentRef.current;
+    if (!container) {
+      return false;
+    }
+
+    const range = selection.getRangeAt(0);
+    const commonAncestor =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+    return Boolean(commonAncestor && container.contains(commonAncestor));
+  }, [draft, editorAnnotationDraft, isDirty, isEditing]);
+
+  const reloadDocumentFromDiskWhenIdle = useCallback(() => {
+    if (isInteractingWithDocument()) {
+      pendingDocumentRefreshRef.current = true;
+      return;
+    }
+
+    pendingDocumentRefreshRef.current = false;
+    void reloadDocumentFromDisk();
+  }, [isInteractingWithDocument, reloadDocumentFromDisk]);
+
   useEffect(() => {
     if (initialCodexLink) {
       setCodexLink(initialCodexLink);
@@ -135,6 +210,55 @@ export function AnnotationWorkspace({
 
     void reloadCodexLink();
   }, [document.id, initialCodexLink, reloadCodexLink]);
+
+  useEffect(() => {
+    if (!isSidebarOpen) {
+      return;
+    }
+
+    const handleFocus = () => {
+      void reloadCodexLink();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [isSidebarOpen, reloadCodexLink]);
+
+  useEffect(() => {
+    if (!hasPendingReviewEvents) {
+      return;
+    }
+
+    const reloadBackgroundReview = async () => {
+      const previousReview = latestReviewRef.current;
+      const nextReview = await review.reload({ silent: true });
+      if (!nextReview) {
+        return;
+      }
+
+      if (hasAutoReviewPollEvents(previousReview) && !hasAutoReviewPollEvents(nextReview)) {
+        void reloadCodexLink();
+        reloadDocumentFromDiskWhenIdle();
+      }
+    };
+
+    const timer = window.setInterval(reloadBackgroundReview, 2500);
+    return () => window.clearInterval(timer);
+  }, [
+    hasPendingReviewEvents,
+    reloadCodexLink,
+    reloadDocumentFromDiskWhenIdle,
+    review.reload
+  ]);
+
+  useEffect(() => {
+    if (!pendingDocumentRefreshRef.current || isInteractingWithDocument()) {
+      return;
+    }
+
+    pendingDocumentRefreshRef.current = false;
+    void reloadDocumentFromDisk();
+  }, [draft, editorAnnotationDraft, isInteractingWithDocument, reloadDocumentFromDisk]);
 
   const captureSelection = () => {
     if (isEditing) {
@@ -151,6 +275,7 @@ export function AnnotationWorkspace({
 
   const selectAnnotation = (annotationId: string) => {
     setIsSidebarOpen(true);
+    void reloadCodexLink();
     review.setSelectedAnnotationId(annotationId);
     const annotation = annotations.find((item) => item.id === annotationId);
     const container = contentRef.current;
@@ -383,6 +508,19 @@ export function AnnotationWorkspace({
     setFeedback(response.ok ? "已重新加入 Codex 队列" : "重试失败，稍后可再试");
   };
 
+  const toggleAnnotationSidebar = () => {
+    const nextOpen = !isSidebarOpen;
+    setIsSidebarOpen(nextOpen);
+    if (nextOpen) {
+      void reloadCodexLink();
+    }
+  };
+
+  const reloadReviewAndCodexLink = () => {
+    void review.reload();
+    void reloadCodexLink();
+  };
+
   return (
     <div
       className={`review-layout${isSidebarOpen ? " review-layout-sidebar-open" : ""}${
@@ -437,7 +575,7 @@ export function AnnotationWorkspace({
           aria-label={isSidebarOpen ? "收起批注列表" : "打开批注列表"}
           aria-expanded={isSidebarOpen}
           title={isSidebarOpen ? "收起批注列表" : "打开批注列表"}
-          onClick={() => setIsSidebarOpen((current) => !current)}
+          onClick={toggleAnnotationSidebar}
         >
           <MessageSquareText size={17} />
           {annotations.length > 0 ? <span>{annotations.length}</span> : null}
@@ -520,7 +658,7 @@ export function AnnotationWorkspace({
           onCopySuccessorInstruction={copySuccessorConnectionInstruction}
           onSendToCodex={sendAnnotation}
           onRetryReviewEvent={retryEvent}
-          onReload={review.reload}
+          onReload={reloadReviewAndCodexLink}
         />
       ) : null}
     </div>

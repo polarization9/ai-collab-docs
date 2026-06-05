@@ -30,15 +30,31 @@ export function useReview(documentId: string, initialReview: ReviewFile | null =
   );
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
-    setState({ status: "loading" });
+  const reload = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) {
+      setState({ status: "loading" });
+    }
+
     try {
-      setState({ status: "ready", review: await fetchReview() });
-    } catch (error) {
-      setState({
-        status: "error",
-        message: error instanceof Error ? error.message : "Unable to load review."
+      const review = await fetchReview();
+      setState((current) => {
+        if (
+          current.status === "ready" &&
+          current.review.updatedAt === review.updatedAt
+        ) {
+          return current;
+        }
+        return { status: "ready", review };
       });
+      return review;
+    } catch (error) {
+      if (!options.silent) {
+        setState({
+          status: "error",
+          message: error instanceof Error ? error.message : "Unable to load review."
+        });
+      }
+      return null;
     }
   }, []);
 

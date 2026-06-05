@@ -864,19 +864,16 @@ select {
 .toc-toggle-button,
 .toc-open-button {
   display: inline-grid;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid #c4d3ce;
-  border-radius: 8px;
-  background: rgba(251, 253, 252, 0.74);
+  border: 0;
+  background: transparent;
   color: #35534a;
   cursor: pointer;
   padding: 0;
   transition:
-    background-color 0.16s ease,
-    border-color 0.16s ease,
     color 0.16s ease,
     transform 0.16s ease;
 }
@@ -886,8 +883,6 @@ select {
 .toc-open-button:hover,
 .toc-open-button:focus-visible {
   outline: 0;
-  border-color: #99bcb1;
-  background: #edf8f4;
   color: #0d766e;
 }
 
@@ -957,13 +952,10 @@ select {
 }
 
 .toc-open-button {
-  position: absolute;
+  position: fixed;
   top: 18px;
-  left: 18px;
-  z-index: 58;
-  background: rgba(251, 253, 252, 0.94);
-  box-shadow: 0 10px 26px rgba(20, 30, 26, 0.11);
-  backdrop-filter: blur(10px);
+  left: 20px;
+  z-index: 64;
 }
 
 .document-pane:has(.review-layout-editing) {
@@ -1079,6 +1071,17 @@ select {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+.document-content .document-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  margin: 24px 0;
+  border: 1px solid #cfd9d5;
+  border-radius: 8px;
+  background: #fbfdfc;
 }
 
 .code-block-shell {
@@ -2335,74 +2338,222 @@ body.table-column-resizing {
   line-height: 1.2;
 }
 
-.annotation-codex-card {
-  display: grid;
+.annotation-codex-route {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
-  border: 1px solid #d6e3de;
+  border: 1px solid #d8e4df;
   border-radius: 8px;
-  background: #f1f6f4;
-  padding: 10px;
+  background: rgba(249, 252, 250, 0.86);
+  padding: 9px 10px;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease;
 }
 
-.annotation-codex-copy {
+.annotation-codex-route-main {
   display: grid;
-  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
 }
 
-.annotation-codex-copy span {
-  color: #7a8984;
-  font-size: 10px;
-  font-weight: 850;
-  letter-spacing: 0;
-  text-transform: uppercase;
+.annotation-codex-route-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #aebbb7;
+  box-shadow: 0 0 0 3px rgba(174, 187, 183, 0.18);
 }
 
-.annotation-codex-copy strong {
-  color: #1d3029;
+.annotation-codex-route-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.annotation-codex-route-copy strong {
+  overflow: hidden;
+  color: #1f342c;
   font-size: 13px;
+  font-weight: 850;
   line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.annotation-codex-copy small {
-  color: #6a7a75;
+.annotation-codex-route-copy small {
+  overflow: hidden;
+  color: #6f7e79;
   font-size: 12px;
-  line-height: 1.35;
+  font-weight: 650;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.annotation-codex-actions {
-  display: flex;
-  flex-wrap: wrap;
+.annotation-codex-route-source,
+.annotation-codex-route-successor,
+.annotation-codex-route-auto {
+  border-color: #c9ddd5;
+  background: #f4faf7;
+}
+
+.annotation-codex-route-source .annotation-codex-route-dot,
+.annotation-codex-route-successor .annotation-codex-route-dot {
+  background: #6ab89d;
+  box-shadow: 0 0 0 3px rgba(106, 184, 157, 0.18);
+}
+
+.annotation-codex-route-auto {
+  border-color: #a8d0c2;
+  background: #edf8f4;
+}
+
+.annotation-codex-route-auto .annotation-codex-route-dot {
+  background: #0d766e;
+  box-shadow: 0 0 0 3px rgba(13, 118, 110, 0.16);
+}
+
+.annotation-codex-route-error {
+  border-color: #f1c6bd;
+  background: #fff8f6;
+}
+
+.annotation-codex-route-error .annotation-codex-route-dot {
+  background: #c45b48;
+  box-shadow: 0 0 0 3px rgba(196, 91, 72, 0.14);
+}
+
+.annotation-codex-route-actions {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
 }
 
-.annotation-codex-actions button {
+.annotation-codex-monitor,
+.annotation-codex-route-button {
   display: inline-flex;
-  min-height: 28px;
+  height: 30px;
   align-items: center;
   justify-content: center;
-  gap: 5px;
   border: 1px solid #cedbd6;
-  border-radius: 6px;
+  border-radius: 7px;
   background: #ffffff;
   color: #31433c;
   cursor: pointer;
   font-size: 12px;
   font-weight: 780;
-  padding: 5px 8px;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease,
+    transform 0.16s ease;
 }
 
-.annotation-codex-actions button:hover,
-.annotation-codex-actions button:focus-visible {
+.annotation-codex-monitor {
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.annotation-codex-route-button {
+  position: relative;
+  width: 30px;
+  padding: 0;
+}
+
+.annotation-codex-route-button::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 20;
+  width: max-content;
+  max-width: 160px;
+  transform: translate(-50%, -3px);
+  border-radius: 5px;
+  background: rgba(27, 39, 34, 0.94);
+  color: #f7faf8;
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0;
+  padding: 7px 8px;
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.annotation-codex-route-button:hover::after,
+.annotation-codex-route-button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.annotation-codex-switch {
+  position: relative;
+  width: 23px;
+  height: 14px;
+  flex: none;
+  border-radius: 999px;
+  background: #d9e4df;
+  transition: background-color 0.16s ease;
+}
+
+.annotation-codex-switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(26, 43, 36, 0.18);
+  transition: transform 0.16s ease;
+}
+
+.annotation-codex-monitor-on {
+  border-color: #a8d0c2;
+  background: #e7f4ef;
+  color: #0d766e;
+}
+
+.annotation-codex-monitor-on .annotation-codex-switch {
+  background: #0d766e;
+}
+
+.annotation-codex-monitor-on .annotation-codex-switch span {
+  transform: translateX(9px);
+}
+
+.annotation-codex-monitor:hover,
+.annotation-codex-monitor:focus-visible,
+.annotation-codex-route-button:hover,
+.annotation-codex-route-button:focus-visible {
   outline: 0;
   border-color: #8fb6aa;
   background: #e7f1ed;
   color: #0d766e;
 }
 
-.annotation-codex-actions button:disabled {
+.annotation-codex-monitor:active,
+.annotation-codex-route-button:active {
+  transform: translateY(1px);
+}
+
+.annotation-codex-monitor:disabled,
+.annotation-codex-route-button:disabled {
   cursor: not-allowed;
   opacity: 0.52;
+  transform: none;
 }
 
 .annotation-filter {
@@ -2522,6 +2673,14 @@ body.table-column-resizing {
 
 .annotation-card-main-editing {
   cursor: default;
+}
+
+.annotation-card-status-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .annotation-card-body {
@@ -2861,17 +3020,41 @@ body.table-column-resizing {
   color: #2e6b57;
 }
 
-.annotation-event-failed {
+.annotation-event-badge {
   display: inline-flex;
   width: fit-content;
   align-items: center;
   border-radius: 999px;
-  background: #f8e8e4;
-  color: #8a382b;
   font-size: 12px;
   font-weight: 800;
   line-height: 1;
   padding: 4px 7px;
+}
+
+.annotation-event-badge-queued {
+  background: #eef4f2;
+  color: #587069;
+}
+
+.annotation-event-badge-delivering {
+  background: #e8f0fb;
+  color: #2f5b85;
+}
+
+.annotation-event-badge-sent,
+.annotation-event-badge-processing {
+  background: #e7f3f0;
+  color: #0d766e;
+}
+
+.annotation-event-badge-handled {
+  background: #edf3ed;
+  color: #4a684b;
+}
+
+.annotation-event-badge-failed {
+  background: #f8e8e4;
+  color: #8a382b;
 }
 
 .center-state {
@@ -3008,6 +3191,11 @@ body.table-column-resizing {
   .document-action-dock {
     top: 14px;
     right: 14px;
+  }
+
+  .toc-open-button {
+    top: 14px;
+    left: 14px;
   }
 
   .annotation-entry-button {

@@ -1,4 +1,7 @@
 type OpenFilesListener = (paths: string[]) => void;
+type DialogModule = typeof import("@tauri-apps/plugin-dialog");
+
+let dialogModulePromise: Promise<DialogModule> | null = null;
 
 export function isTauriRuntime(): boolean {
   return (
@@ -7,13 +10,27 @@ export function isTauriRuntime(): boolean {
   );
 }
 
+function loadDialogModule(): Promise<DialogModule> {
+  dialogModulePromise ??= import("@tauri-apps/plugin-dialog");
+  return dialogModulePromise;
+}
+
+export function preloadMarkdownFilePicker(): void {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
+  void loadDialogModule();
+}
+
 export async function pickMarkdownFile(): Promise<string | null> {
   if (!isTauriRuntime()) {
     return null;
   }
 
-  const { open } = await import("@tauri-apps/plugin-dialog");
+  const { open } = await loadDialogModule();
   const selected = await open({
+    title: "选择 Markdown 文件",
     multiple: false,
     directory: false,
     filters: [

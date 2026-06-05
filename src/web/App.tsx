@@ -10,7 +10,8 @@ import {
   getInitialOpenedFiles,
   isTauriRuntime,
   listenForOpenedFiles,
-  pickMarkdownFile
+  pickMarkdownFile,
+  preloadMarkdownFilePicker
 } from "./desktop";
 
 const CodexBridgePrototype = lazy(() =>
@@ -90,6 +91,10 @@ export default function App() {
         message: error instanceof Error ? error.message : "Unable to open document."
       });
     }
+  }, []);
+
+  useEffect(() => {
+    preloadMarkdownFilePicker();
   }, []);
 
   useEffect(() => {

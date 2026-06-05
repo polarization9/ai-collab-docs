@@ -28,6 +28,8 @@ export function AnnotationLayer({
   const [rects, setRects] = useState<HighlightRect[]>([]);
 
   useEffect(() => {
+    let animationFrame = 0;
+
     const updateRects = () => {
       const container = containerRef.current;
       if (!container) {
@@ -50,12 +52,43 @@ export function AnnotationLayer({
       setRects(nextRects);
     };
 
+    const scheduleUpdateRects = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(updateRects);
+    };
+
     updateRects();
-    window.addEventListener("resize", updateRects);
-    window.addEventListener("scroll", updateRects, { passive: true });
+    window.addEventListener("resize", scheduleUpdateRects);
+    window.addEventListener("scroll", scheduleUpdateRects, { passive: true });
+
+    const container = containerRef.current;
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdateRects);
+    const mutationObserver =
+      typeof MutationObserver === "undefined"
+        ? null
+        : new MutationObserver(scheduleUpdateRects);
+
+    if (container) {
+      resizeObserver?.observe(container);
+      container
+        .querySelectorAll<HTMLElement>("[data-review-block-id], img, svg")
+        .forEach((element) => resizeObserver?.observe(element));
+      mutationObserver?.observe(container, {
+        attributes: true,
+        childList: true,
+        subtree: true
+      });
+      container.addEventListener("load", scheduleUpdateRects, true);
+    }
+
     return () => {
-      window.removeEventListener("resize", updateRects);
-      window.removeEventListener("scroll", updateRects);
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", scheduleUpdateRects);
+      window.removeEventListener("scroll", scheduleUpdateRects);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      container?.removeEventListener("load", scheduleUpdateRects, true);
     };
   }, [annotations, containerRef, selectedAnnotationId]);
 

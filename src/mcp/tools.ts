@@ -1,4 +1,3 @@
-import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -9,7 +8,12 @@ import {
 } from "../server/codexLink.js";
 import { loadReviewDocument } from "../server/document.js";
 import { saveReviewDocument } from "../server/documentEdit.js";
-import { getCodexLinkPath, getReviewPath } from "../server/paths.js";
+import {
+  assertReadableMarkdownFile,
+  getCodexLinkPath,
+  getReviewPath,
+  resolveMarkdownPath
+} from "../server/paths.js";
 import {
   addAnnotationReply,
   createReviewEvent,
@@ -48,13 +52,16 @@ const REVIEW_EVENT_STATUS_VALUES = [
 ] as const;
 const CODEX_TARGET_ROLE_VALUES = ["source", "successor"] as const;
 
-export function registerReviewerTools(server: McpServer, markdownPath: string): void {
+export function registerReviewerTools(server: McpServer, markdownPath?: string): void {
   server.registerTool(
     "reviewer_get_document",
     {
       title: "Get Review Document",
       description:
-        "Read the current Markdown document content and metadata for this Margent session.",
+        "Read Markdown document content and metadata for a Margent document.",
+      inputSchema: {
+        documentPath: z.string().min(1).optional().describe("Markdown path.")
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -62,7 +69,8 @@ export function registerReviewerTools(server: McpServer, markdownPath: string): 
         openWorldHint: false
       }
     },
-    async () => jsonToolResult(await getDocumentPayload(markdownPath))
+    async ({ documentPath }) =>
+      jsonToolResult(await getDocumentPayload(resolveToolMarkdownPath(markdownPath, documentPath)))
   );
 
   server.registerTool(
@@ -178,8 +186,9 @@ export function registerReviewerTools(server: McpServer, markdownPath: string): 
     {
       title: "List Review Annotations",
       description:
-        "List annotations for the current document. Use status='open' when you are asked to handle unresolved review items; use status='all' when you need full history.",
+        "List annotations for a Margent document. Use status='open' when you are asked to handle unresolved review items; use status='all' when you need full history.",
       inputSchema: {
+        documentPath: z.string().min(1).optional().describe("Optional Markdown path."),
         status: z.enum(STATUS_VALUES).optional().describe("Filter by annotation status.")
       },
       annotations: {
@@ -189,8 +198,10 @@ export function registerReviewerTools(server: McpServer, markdownPath: string): 
         openWorldHint: false
       }
     },
-    async ({ status = "open" }) =>
-      jsonToolResult(await listAnnotationsPayload(markdownPath, status))
+    async ({ documentPath, status = "open" }) =>
+      jsonToolResult(
+        await listAnnotationsPayload(resolveToolMarkdownPath(markdownPath, documentPath), status)
+      )
   );
 
   server.registerTool(
@@ -538,7 +549,10 @@ export function registerReviewerTools(server: McpServer, markdownPath: string): 
     "reviewer_get_session",
     {
       title: "Get Reviewer Session",
-      description: "Read the current single-document Reviewer MCP session.",
+      description: "Read the current Margent MCP session.",
+      inputSchema: {
+        documentPath: z.string().min(1).optional().describe("Optional Markdown path.")
+      },
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -546,7 +560,7 @@ export function registerReviewerTools(server: McpServer, markdownPath: string): 
         openWorldHint: false
       }
     },
-    async () => jsonToolResult(await getSessionPayload(markdownPath))
+    async ({ documentPath }) => jsonToolResult(await getSessionPayload(markdownPath, documentPath))
   );
 
   server.registerTool(
@@ -554,7 +568,7 @@ export function registerReviewerTools(server: McpServer, markdownPath: string): 
     {
       title: "List Open Documents",
       description:
-        "List Markdown documents currently exposed by this MCP server. The first implementation exposes one document.",
+        "List Markdown documents currently exposed by this MCP server. In multi-document mode, pass documentPath to document-specific tools.",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -584,7 +598,7 @@ async function getDocumentPayload(markdownPath: string): Promise<ToolResultPaylo
 }
 
 async function getCodexLinkPayload(
-  markdownPath: string,
+  markdownPath: string | undefined,
   documentPath?: string
 ): Promise<ToolResultPayload> {
   return {
@@ -593,7 +607,7 @@ async function getCodexLinkPayload(
 }
 
 async function updateCodexLinkPayload(
-  markdownPath: string,
+  markdownPath: string | undefined,
   input: {
     documentPath?: string;
     sourceThreadId?: string;
@@ -636,7 +650,7 @@ async function updateCodexLinkPayload(
 }
 
 async function bindCurrentCodexThreadPayload(
-  markdownPath: string,
+  markdownPath: string | undefined,
   input: {
     documentPath?: string;
     role: CodexTargetType;
@@ -678,7 +692,7 @@ async function listAnnotationsPayload(
 }
 
 async function getAnnotationContextPayload(
-  markdownPath: string,
+  markdownPath: string | undefined,
   annotationId: string,
   documentPath?: string
 ): Promise<ToolResultPayload> {
@@ -875,24 +889,50 @@ async function markReviewEventHandledPayload(
   };
 }
 
-async function getSessionPayload(markdownPath: string): Promise<ToolResultPayload> {
-  const document = await loadReviewDocument(markdownPath);
-  const codexLink = await getCodexLinkResponse(markdownPath);
+async function getSessionPayload(
+  markdownPath: string | undefined,
+  documentPath?: string
+): Promise<ToolResultPayload> {
+  const resolvedMarkdownPath =
+    documentPath || markdownPath ? resolveToolMarkdownPath(markdownPath, documentPath) : undefined;
+
+  if (!resolvedMarkdownPath) {
+    return {
+      session: {
+        hasDocument: false,
+        mode: "multi-document",
+        requiresDocumentPath: true
+      }
+    };
+  }
+
+  const document = await loadReviewDocument(resolvedMarkdownPath);
+  const codexLink = await getCodexLinkResponse(resolvedMarkdownPath);
   return {
     session: {
       hasDocument: true,
-      documentPath: markdownPath,
-      reviewPath: getReviewPath(markdownPath),
-      codexLinkPath: getCodexLinkPath(markdownPath),
+      mode: markdownPath ? "default-document" : "multi-document",
+      documentPath: resolvedMarkdownPath,
+      reviewPath: getReviewPath(resolvedMarkdownPath),
+      codexLinkPath: getCodexLinkPath(resolvedMarkdownPath),
       documentId: document.id,
       codexConnection: codexLink.connection
     }
   };
 }
 
-async function listOpenDocumentsPayload(markdownPath: string): Promise<ToolResultPayload> {
+async function listOpenDocumentsPayload(markdownPath: string | undefined): Promise<ToolResultPayload> {
+  if (!markdownPath) {
+    return {
+      mode: "multi-document",
+      requiresDocumentPath: true,
+      documents: []
+    };
+  }
+
   const document = await loadReviewDocument(markdownPath);
   return {
+    mode: "default-document",
     documents: [
       {
         id: document.id,
@@ -952,16 +992,18 @@ function jsonToolResult(payload: ToolResultPayload): CallToolResult {
   };
 }
 
-function resolveToolMarkdownPath(markdownPath: string, documentPath?: string): string {
+function resolveToolMarkdownPath(markdownPath: string | undefined, documentPath?: string): string {
   if (!documentPath) {
+    if (!markdownPath) {
+      throw new Error(
+        "documentPath is required when Margent MCP is running in multi-document mode."
+      );
+    }
     return markdownPath;
   }
 
-  if (path.resolve(documentPath) !== path.resolve(markdownPath)) {
-    throw new Error(
-      `This MCP server is bound to ${markdownPath}; requested document is ${documentPath}.`
-    );
-  }
+  const resolvedMarkdownPath = resolveMarkdownPath(documentPath);
+  assertReadableMarkdownFile(resolvedMarkdownPath);
 
-  return markdownPath;
+  return resolvedMarkdownPath;
 }

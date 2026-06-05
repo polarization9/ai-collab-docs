@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
-  <title id="title">Margent app icon v5</title>
-  <desc id="desc">A centered document margin mark connected to a lighter sideways Margent glyph.</desc>
+  <title id="title">Margent app icon v8</title>
+  <desc id="desc">A lighter document margin mark connected to a narrower sideways Margent glyph.</desc>
   <defs>
     <linearGradient id="paper" x1="180" y1="120" x2="820" y2="900" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#fffaf0"/>
@@ -13,17 +13,17 @@
 
   <rect width="1024" height="1024" rx="184" fill="url(#paper)" filter="url(#soft-shadow)"/>
 
-  <g transform="translate(486 562) scale(1.5) translate(-512 -512)" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="260" y1="334" x2="334" y2="334" stroke="#9ea8a4" stroke-width="17"/>
-    <line x1="260" y1="396" x2="318" y2="396" stroke="#c5ccc8" stroke-width="13"/>
-    <line x1="260" y1="456" x2="328" y2="456" stroke="#c5ccc8" stroke-width="13"/>
-    <line x1="260" y1="516" x2="314" y2="516" stroke="#c5ccc8" stroke-width="13"/>
-    <line x1="260" y1="578" x2="342" y2="578" stroke="#c5ccc8" stroke-width="13"/>
+  <g transform="translate(486 570) scale(1.6) translate(-512 -512)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="260" y1="334" x2="334" y2="334" stroke="#9ea8a4" stroke-width="14"/>
+    <line x1="260" y1="396" x2="318" y2="396" stroke="#c5ccc8" stroke-width="11"/>
+    <line x1="260" y1="456" x2="328" y2="456" stroke="#c5ccc8" stroke-width="11"/>
+    <line x1="260" y1="516" x2="314" y2="516" stroke="#c5ccc8" stroke-width="11"/>
+    <line x1="260" y1="578" x2="342" y2="578" stroke="#c5ccc8" stroke-width="11"/>
 
-    <line x1="396" y1="262" x2="396" y2="686" stroke="#101817" stroke-width="21"/>
-    <circle cx="396" cy="456" r="22" fill="#c9902e" stroke="#f4f1ea" stroke-width="6"/>
+    <line x1="396" y1="262" x2="396" y2="686" stroke="#101817" stroke-width="14"/>
+    <circle cx="396" cy="456" r="18" fill="#c9902e" stroke="#f4f1ea" stroke-width="5"/>
 
-    <path d="M 444 360 H 672 L 534 456 H 792" stroke="#2b7a78" stroke-width="29"/>
-    <path d="M 534 456 L 672 552 H 444" stroke="#2b7a78" stroke-width="29"/>
+    <path d="M 464 360 H 668 L 554 456 H 812" stroke="#2b7a78" stroke-width="18"/>
+    <path d="M 554 456 L 668 552 H 464" stroke="#2b7a78" stroke-width="18"/>
   </g>
 </svg>

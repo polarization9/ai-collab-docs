@@ -148,6 +148,17 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
           {children}
         </a>
       );
+    },
+    img({ alt, src, title }) {
+      return (
+        <img
+          className="document-image"
+          src={resolveDocumentImageSrc(src)}
+          alt={alt ?? ""}
+          title={title}
+          loading="lazy"
+        />
+      );
     }
   };
 
@@ -159,6 +170,18 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
     </article>
   );
 });
+
+function resolveDocumentImageSrc(src: string | undefined): string {
+  if (!src) {
+    return "";
+  }
+
+  if (/^(https?:|data:|blob:)/i.test(src) || src.startsWith("//")) {
+    return src;
+  }
+
+  return `/api/document-asset?src=${encodeURIComponent(src)}`;
+}
 
 function stringifyReactNode(node: ReactNode): string {
   if (Array.isArray(node)) {

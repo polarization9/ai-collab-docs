@@ -19,6 +19,7 @@ import {
   hasActiveReviewEvent,
   loadReviewFile,
   markReviewEventDelivering,
+  recoverStaleDeliveringEvents,
   updateReviewEvent
 } from "./review.js";
 
@@ -30,6 +31,11 @@ type SendToThreadInput = {
   eventId: string;
   targetType: CodexTargetType;
   prompt: string;
+  onTurnStarted?: (delivery: {
+    threadId: string;
+    turnId?: string;
+    deliveryId: string;
+  }) => Promise<void>;
 };
 
 type SendToThreadResult = {
@@ -129,6 +135,8 @@ export async function retryReviewEvent(
 export async function dispatchReviewEvents(
   markdownPath: string
 ): Promise<BridgeSendAnnotationResponse> {
+  await recoverStaleDeliveringEvents(markdownPath);
+
   if (await hasActiveReviewEvent(markdownPath)) {
     return {
       ok: true,
@@ -189,7 +197,34 @@ export async function dispatchReviewEvents(
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
     targetType: target.type,
-    prompt
+    prompt,
+    onTurnStarted: async ({ threadId, turnId, deliveryId }) => {
+      const now = new Date().toISOString();
+      const latestReview = await loadReviewFile(markdownPath);
+      const latestEvent = getEventFromReview(latestReview, queuedEvent.id);
+      if (latestEvent.deliveryStatus !== "delivering") {
+        return;
+      }
+
+      await updateReviewEvent(markdownPath, queuedEvent.id, {
+        deliveryStatus: "sent",
+        lastError: undefined,
+        delivery: {
+          ...latestEvent.delivery,
+          adapter: adapter.name,
+          threadId,
+          turnId,
+          deliveryId,
+          lastAttemptAt: now
+        }
+      });
+      await updateCodexDocumentLink(markdownPath, {
+        bridge: {
+          lastDeliveredEventId: queuedEvent.id,
+          lastDeliveryAt: now
+        }
+      });
+    }
   });
 
   if (!result.ok) {
@@ -258,6 +293,10 @@ export function createBridgePrompt(input: {
     input.targetType,
     "",
     "请按以下步骤处理：",
+    "",
+    "0. 如果当前工具列表里没有 Margent / reviewer 相关工具，先用工具发现能力搜索：",
+    "   - 搜索关键词：reviewer_get_annotation_context Margent annotations",
+    "   - 目标是加载 Margent MCP 的批注读取、回复、文档编辑和事件标记工具。",
     "",
     "1. 调用 Margent MCP 读取这条批注：",
     "   reviewer_get_annotation_context({",
@@ -383,6 +422,13 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
           ]
         });
         const turnId = extractTurnId(turnStartResult);
+        const deliveryId = turnId ? `app-server:${turnId}` : `app-server:${input.eventId}`;
+
+        await input.onTurnStarted?.({
+          threadId: resumedThreadId,
+          turnId,
+          deliveryId
+        });
 
         await client.waitForTurnCompleted(turnId);
 
@@ -390,7 +436,7 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
           ok: true,
           threadId: resumedThreadId,
           turnId,
-          deliveryId: turnId ? `app-server:${turnId}` : `app-server:${input.eventId}`
+          deliveryId
         };
       } catch (error) {
         return {

@@ -1,5 +1,6 @@
 import express from "express";
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -65,6 +66,17 @@ export type StartedServer = {
   url: string;
 };
 
+const DOCUMENT_ASSET_EXTENSIONS = new Set([
+  ".avif",
+  ".bmp",
+  ".gif",
+  ".jpeg",
+  ".jpg",
+  ".png",
+  ".svg",
+  ".webp"
+]);
+
 export function startServer(options: StartServerOptions): Promise<StartedServer> {
   const app = express();
   const host = "127.0.0.1";
@@ -120,6 +132,20 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
       const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
       const document = await loadReviewDocument(currentMarkdownPath);
       response.json(document);
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
+  app.get("/api/document-asset", (request, response) => {
+    try {
+      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const assetPath = resolveDocumentAssetPath(currentMarkdownPath, request.query.src);
+      response.sendFile(assetPath, (error) => {
+        if (error && !response.headersSent) {
+          sendApiError(response, error);
+        }
+      });
     } catch (error) {
       sendApiError(response, error);
     }
@@ -203,8 +229,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
           annotationId: created.id,
           deliveryMode: "auto"
         });
-        const dispatched = await dispatchReviewEvents(currentMarkdownPath);
-        review = dispatched.review;
+        dispatchReviewEventsInBackground(currentMarkdownPath);
       }
       response.status(201).json(review);
     } catch (error) {
@@ -498,6 +523,44 @@ function getCurrentMarkdownPath(markdownPath: string | undefined): string {
   return markdownPath;
 }
 
+function resolveDocumentAssetPath(markdownPath: string, inputSrc: unknown): string {
+  if (typeof inputSrc !== "string" || !inputSrc.trim()) {
+    throw new Error("Image source is required.");
+  }
+
+  const src = inputSrc.trim();
+  if (/^[a-z][a-z\d+.-]*:/i.test(src) || src.startsWith("//")) {
+    throw new Error("Remote image sources are not served by Margent.");
+  }
+
+  const [srcWithoutHash] = src.split("#");
+  const [assetReference] = srcWithoutHash.split("?");
+  if (!assetReference) {
+    throw new Error("Image source is required.");
+  }
+
+  const markdownDir = path.dirname(markdownPath);
+  const assetPath = path.isAbsolute(assetReference)
+    ? path.resolve(assetReference)
+    : path.resolve(markdownDir, assetReference);
+  const relativeToDocumentDir = path.relative(markdownDir, assetPath);
+
+  if (relativeToDocumentDir.startsWith("..") || path.isAbsolute(relativeToDocumentDir)) {
+    throw new Error("Image assets must be inside the current document directory.");
+  }
+
+  const extension = path.extname(assetPath).toLowerCase();
+  if (!DOCUMENT_ASSET_EXTENSIONS.has(extension)) {
+    throw new Error("Unsupported image asset type.");
+  }
+
+  if (!fs.existsSync(assetPath) || !fs.statSync(assetPath).isFile()) {
+    throw new Error(`Image asset not found: ${assetReference}`);
+  }
+
+  return assetPath;
+}
+
 function pickMarkdownPath(): Promise<string> {
   if (process.platform !== "darwin") {
     throw new Error("File picker is only supported on macOS for now.");
@@ -535,6 +598,17 @@ function sendApiError(response: express.Response, error: unknown): void {
   response.status(status).json({
     error: error instanceof Error ? error.message : "Request failed."
   });
+}
+
+function dispatchReviewEventsInBackground(markdownPath: string): void {
+  setTimeout(() => {
+    void dispatchReviewEvents(markdownPath).catch((error) => {
+      console.error(
+        `[Margent] Failed to dispatch review events for ${markdownPath}:`,
+        error
+      );
+    });
+  }, 0);
 }
 
 function parseReviewEventStatus(value: unknown): ReviewEventDeliveryStatus | undefined {
