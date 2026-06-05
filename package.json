@@ -13,7 +13,11 @@
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "desktop:runtime": "node scripts/build-desktop-runtime.mjs",
+    "desktop:sidecar": "npm run build:server && npm run desktop:runtime && node scripts/build-desktop-sidecar.mjs",
+    "tauri:dev": "npm run desktop:sidecar && tauri dev",
+    "tauri:build": "npm run build && npm run desktop:sidecar && tauri build"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
