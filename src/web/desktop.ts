@@ -32,8 +32,13 @@ export async function getInitialOpenedFiles(): Promise<string[]> {
     return [];
   }
 
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<string[]>("opened_files");
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<string[]>("opened_files");
+  } catch (error) {
+    console.warn("Unable to read initially opened files from Tauri.", error);
+    return [];
+  }
 }
 
 export async function listenForOpenedFiles(listener: OpenFilesListener): Promise<() => void> {
@@ -41,9 +46,14 @@ export async function listenForOpenedFiles(listener: OpenFilesListener): Promise
     return () => undefined;
   }
 
-  const { listen } = await import("@tauri-apps/api/event");
-  const unlisten = await listen<string[]>("desktop-open-files", (event) => {
-    listener(event.payload);
-  });
-  return unlisten;
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<string[]>("desktop-open-files", (event) => {
+      listener(event.payload);
+    });
+    return unlisten;
+  } catch (error) {
+    console.warn("Unable to listen for opened files from Tauri.", error);
+    return () => undefined;
+  }
 }

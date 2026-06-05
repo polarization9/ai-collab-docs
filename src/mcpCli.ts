@@ -43,7 +43,7 @@ function parseArgs(args: string[]): McpCliOptions {
 }
 
 function printUsage(): void {
-  console.error("Usage: ai-md-reviewer-mcp <markdown-file>");
+  console.error("Usage: margent-mcp <markdown-file>");
 }
 
 main().catch((error: unknown) => {

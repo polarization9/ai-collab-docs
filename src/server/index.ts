@@ -416,7 +416,7 @@ function createDesktopTokenMiddleware(
       return;
     }
 
-    if (request.header("x-ai-md-reviewer-token") === desktopToken) {
+    if (request.header("x-margent-token") === desktopToken) {
       next();
       return;
     }

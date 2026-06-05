@@ -54,7 +54,7 @@ export function registerReviewerTools(server: McpServer, markdownPath: string): 
     {
       title: "Get Review Document",
       description:
-        "Read the current Markdown document content and metadata for this AI Markdown Reviewer session.",
+        "Read the current Markdown document content and metadata for this Margent session.",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

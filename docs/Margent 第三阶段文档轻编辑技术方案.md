@@ -1,4 +1,4 @@
-# AI Markdown Reviewer 第三阶段文档轻编辑技术方案
+# Margent 第三阶段文档轻编辑技术方案
 
 ## 1. 技术目标
 

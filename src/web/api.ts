@@ -223,7 +223,7 @@ function getApiHeaders(
   }
 
   if (desktopToken) {
-    apiHeaders["X-AI-MD-Reviewer-Token"] = desktopToken;
+    apiHeaders["X-Margent-Token"] = desktopToken;
   }
 
   return {
@@ -237,7 +237,7 @@ function getDesktopToken(): string | null {
     return null;
   }
 
-  const existing = window.sessionStorage.getItem("ai-md-reviewer-token");
+  const existing = window.sessionStorage.getItem("margent-token");
   if (existing) {
     return existing;
   }
@@ -247,7 +247,7 @@ function getDesktopToken(): string | null {
     return null;
   }
 
-  window.sessionStorage.setItem("ai-md-reviewer-token", token);
+  window.sessionStorage.setItem("margent-token", token);
   const url = new URL(window.location.href);
   url.searchParams.delete("desktopToken");
   window.history.replaceState(null, "", url);

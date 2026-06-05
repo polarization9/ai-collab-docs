@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Margent",
+  "mainBinaryName": "Margent",
   "version": "0.1.0",
-  "identifier": "com.aicollabdocs.reviewer",
+  "identifier": "com.margent.desktop",
   "build": {
     "beforeDevCommand": "npm run build:web",
     "beforeBuildCommand": "npm run build",
@@ -25,7 +26,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/ai-md-reviewer-server"],
+    "externalBin": ["binaries/margent-server"],
     "resources": ["../dist", "../node_modules", "resources/node"],
     "fileAssociations": [
       {
@@ -47,7 +48,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ai-md-reviewer"]
+        "schemes": ["margent"]
       }
     }
   }

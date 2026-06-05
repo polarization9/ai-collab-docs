@@ -1,11 +1,11 @@
-# AI Markdown Reviewer Tauri 产品外壳技术方案
+# Margent Tauri 产品外壳技术方案
 
 ## 1. 文档信息
 
-- 产品名称：AI Markdown Reviewer
+- 产品名称：Margent
 - 技术模块：Tauri 产品外壳
 - 文档日期：2026-06-03
-- 关联 PRD：`AI Markdown Reviewer 产品外壳与 Codex 连接 PRD.md`
+- 关联 PRD：`Margent 产品外壳与 Codex 连接 PRD.md`
 - 目标版本：v0.4.0
 - 当前状态：技术方案草案
 
@@ -43,7 +43,7 @@ src/
 当前运行模式：
 
 ```text
-ai-md-reviewer <markdown-file> --port 4318
+margent <markdown-file> --port 4318
 → Express 监听 127.0.0.1:4318
 → Express 提供 /api/*
 → Express 在生产模式下提供 dist/web 静态资源
@@ -62,7 +62,7 @@ ai-md-reviewer <markdown-file> --port 4318
 第一版采用“桌面壳 + Node sidecar server”的架构。
 
 ```text
-AI Markdown Reviewer.app
+Margent.app
 ├── Tauri Shell
 │   ├── macOS 文件打开事件
 │   ├── 单实例管理
@@ -159,7 +159,7 @@ src-tauri/
 ├── capabilities/
 │   └── default.json
 ├── binaries/
-│   └── ai-md-reviewer-server-<target-triple>
+│   └── margent-server-<target-triple>
 └── src/
     ├── lib.rs
     ├── main.rs
@@ -210,7 +210,7 @@ src/
 
 ```json
 {
-  "productName": "AI Markdown Reviewer",
+  "productName": "Margent",
   "identifier": "com.ai-collab-docs.reviewer",
   "build": {
     "beforeDevCommand": "npm run build:server",
@@ -224,7 +224,7 @@ src/
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "externalBin": ["binaries/ai-md-reviewer-server"],
+    "externalBin": ["binaries/margent-server"],
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],
@@ -242,7 +242,7 @@ src/
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ai-md-reviewer"]
+        "schemes": ["margent"]
       }
     }
   }
@@ -265,7 +265,7 @@ P0 使用：
 - `tauri-plugin-single-instance`：保证只有一个 App 实例。
 - `tauri-plugin-dialog`：App 内打开 Markdown 文件。
 - `tauri-plugin-shell`：Rust 侧启动 sidecar。
-- `tauri-plugin-deep-link`：预留 `ai-md-reviewer://`。
+- `tauri-plugin-deep-link`：预留 `margent://`。
 
 P1/P2 视需要增加：
 
@@ -310,8 +310,8 @@ P1/P2 视需要增加：
 新增参数：
 
 ```text
-ai-md-reviewer --desktop-server --port 0 --no-open
-ai-md-reviewer --desktop-server --port 4317 --document /path/to/doc.md
+margent --desktop-server --port 0 --no-open
+margent --desktop-server --port 4317 --document /path/to/doc.md
 ```
 
 行为：
@@ -395,7 +395,7 @@ type OpenDocumentRequest = {
 
 ```text
 用户双击 xxx.md
-→ macOS 启动 AI Markdown Reviewer.app
+→ macOS 启动 Margent.app
 → Tauri 收到 RunEvent::Opened
 → Rust 保存 opened URL
 → sidecar 启动
@@ -523,7 +523,7 @@ P0 增加 session token：
 Tauri 生成随机 token
 → 作为 env 传给 sidecar
 → 前端通过 Tauri command 获取 token
-→ 所有写操作带 X-AI-MD-Reviewer-Token
+→ 所有写操作带 X-Margent-Token
 → server 校验 token
 ```
 
@@ -553,7 +553,7 @@ type RecentDocument = {
 存储位置：
 
 ```text
-~/Library/Application Support/AI Markdown Reviewer/recent-documents.json
+~/Library/Application Support/Margent/recent-documents.json
 ```
 
 行为：
@@ -597,7 +597,7 @@ P1 再做：
 当前 MCP server 是独立 stdio 模式：
 
 ```text
-ai-md-reviewer-mcp <markdown-file>
+margent-mcp <markdown-file>
 ```
 
 Tauri P0 不改变这个能力。
@@ -605,7 +605,7 @@ Tauri P0 不改变这个能力。
 后续需要一个 desktop-aware MCP 模式：
 
 ```text
-ai-md-reviewer-mcp --desktop
+margent-mcp --desktop
 ```
 
 能力：
@@ -690,8 +690,8 @@ npm run tauri:build
 macOS 输出：
 
 ```text
-src-tauri/target/release/bundle/macos/AI Markdown Reviewer.app
-src-tauri/target/release/bundle/dmg/AI Markdown Reviewer_*.dmg
+src-tauri/target/release/bundle/macos/Margent.app
+src-tauri/target/release/bundle/dmg/Margent_*.dmg
 ```
 
 第一版可以先做本机 unsigned build，用于内部试用。
@@ -750,7 +750,7 @@ cargo test
 - `.app` 可直接启动。
 - `.dmg` 安装后可启动。
 - 没有本机 Node 环境时 App 仍可运行。
-- `.md` 打开方式中出现 AI Markdown Reviewer。
+- `.md` 打开方式中出现 Margent。
 - sidecar 在 Apple Silicon 目标下能启动。
 
 ## 19. 实施步骤

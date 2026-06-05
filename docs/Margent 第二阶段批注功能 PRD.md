@@ -1,8 +1,8 @@
-# AI Markdown Reviewer 第二阶段批注功能 PRD
+# Margent 第二阶段批注功能 PRD
 
 ## 1. 文档信息
 
-- 产品名称：AI Markdown Reviewer
+- 产品名称：Margent
 - 阶段名称：第二阶段，批注协作闭环
 - 文档日期：2026-06-02
 - 目标版本：v0.2.0

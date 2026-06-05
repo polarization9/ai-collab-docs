@@ -1,6 +1,6 @@
 use std::{
     io::{Read, Write},
-    net::TcpStream,
+    net::{SocketAddr, TcpListener, TcpStream},
     sync::Mutex,
     time::Duration,
 };
@@ -119,10 +119,12 @@ pub fn run() {
 
 fn start_reviewer_server(app: AppHandle, startup_document: Option<String>) -> tauri::Result<()> {
     let token = app.state::<DesktopState>().token.clone();
+    let port = reserve_local_port().map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?;
+    let server_url = format!("http://127.0.0.1:{port}");
     let mut args = vec![
         "--desktop-server".to_string(),
         "--port".to_string(),
-        "0".to_string(),
+        port.to_string(),
         "--no-open".to_string(),
         "--desktop-token".to_string(),
         token.clone(),
@@ -134,7 +136,7 @@ fn start_reviewer_server(app: AppHandle, startup_document: Option<String>) -> ta
 
     let sidecar = app
         .shell()
-        .sidecar("ai-md-reviewer-server")
+        .sidecar("margent-server")
         .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?
         .args(args);
 
@@ -146,6 +148,7 @@ fn start_reviewer_server(app: AppHandle, startup_document: Option<String>) -> ta
         .lock()
         .expect("server child lock poisoned")
         .replace(child);
+    wait_for_reviewer_server(app.clone(), server_url, port);
 
     tauri::async_runtime::spawn(async move {
         let mut stdout_buffer = String::new();
@@ -167,6 +170,35 @@ fn start_reviewer_server(app: AppHandle, startup_document: Option<String>) -> ta
     Ok(())
 }
 
+fn reserve_local_port() -> std::io::Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+fn wait_for_reviewer_server(app: AppHandle, server_url: String, port: u16) {
+    std::thread::spawn(move || {
+        let address: SocketAddr = match format!("127.0.0.1:{port}").parse() {
+            Ok(address) => address,
+            Err(error) => {
+                eprintln!("failed to parse reviewer server address: {error}");
+                return;
+            }
+        };
+
+        for _ in 0..120 {
+            if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+                if let Err(error) = open_main_window(&app, &server_url) {
+                    eprintln!("failed to open main window: {error}");
+                }
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(75));
+        }
+
+        eprintln!("timed out waiting for reviewer server at {server_url}");
+    });
+}
+
 fn process_stdout_buffer(app: &AppHandle, buffer: &mut String) {
     while let Some(index) = buffer.find('\n') {
         let line = buffer[..index].trim().to_string();
@@ -178,7 +210,9 @@ fn process_stdout_buffer(app: &AppHandle, buffer: &mut String) {
 
         if let Ok(message) = serde_json::from_str::<ServerReadyMessage>(&line) {
             if message.kind == "server-ready" {
-                let _ = open_main_window(app, &message.url);
+                if let Err(error) = open_main_window(app, &message.url) {
+                    eprintln!("failed to open main window: {error}");
+                }
             }
         } else {
             println!("{line}");
@@ -278,7 +312,7 @@ fn post_open_document(server_url: &str, token: &str, path: &str) -> std::io::Res
     let endpoint = format!("{}/api/session/document", url.path().trim_end_matches('/'));
     let body = serde_json::json!({ "path": path }).to_string();
     let request = format!(
-        "POST {endpoint} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-AI-MD-Reviewer-Token: {token}\r\nConnection: close\r\n\r\n{body}",
+        "POST {endpoint} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Margent-Token: {token}\r\nConnection: close\r\n\r\n{body}",
         body.as_bytes().len()
     );
     let mut stream = TcpStream::connect((host, port))?;

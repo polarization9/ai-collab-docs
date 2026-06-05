@@ -1,4 +1,4 @@
-# AI Markdown Reviewer 第二阶段批注功能技术方案
+# Margent 第二阶段批注功能技术方案
 
 ## 1. 技术目标
 
@@ -429,13 +429,13 @@ data-review-heading-id="architecture"
 建议 CLI 形态：
 
 ```bash
-ai-md-reviewer-mcp <markdown-file>
+margent-mcp <markdown-file>
 ```
 
 或：
 
 ```bash
-ai-md-reviewer <markdown-file> --mcp
+margent <markdown-file> --mcp
 ```
 
 实现时优先做独立 MCP 入口，避免和 Web Server 生命周期耦合过深。
@@ -443,13 +443,13 @@ ai-md-reviewer <markdown-file> --mcp
 当前实现提供两个入口：
 
 ```bash
-ai-md-reviewer-mcp <markdown-file>
+margent-mcp <markdown-file>
 ```
 
 以及：
 
 ```bash
-ai-md-reviewer <markdown-file> --mcp
+margent <markdown-file> --mcp
 ```
 
 两者都会启动 stdio MCP server，不启动 Web 阅读器，也不会向 stdout 输出非 MCP 协议内容。
@@ -572,7 +572,7 @@ type UpdateAnnotationStatusInput = {
 ```json
 {
   "mcpServers": {
-    "ai-md-reviewer": {
+    "margent": {
       "command": "node",
       "args": [
         "/Users/zoushangting/Documents/AI协作文档/dist/mcpCli.js",
@@ -588,8 +588,8 @@ type UpdateAnnotationStatusInput = {
 ```json
 {
   "mcpServers": {
-    "ai-md-reviewer": {
-      "command": "ai-md-reviewer-mcp",
+    "margent": {
+      "command": "margent-mcp",
       "args": ["/path/to/document.md"]
     }
   }

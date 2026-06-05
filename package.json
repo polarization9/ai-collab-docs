@@ -1,10 +1,10 @@
 {
-  "name": "ai-md-reviewer",
+  "name": "margent",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "ai-md-reviewer": "./dist/cli.js",
-    "ai-md-reviewer-mcp": "./dist/mcpCli.js"
+    "margent": "./dist/cli.js",
+    "margent-mcp": "./dist/mcpCli.js"
   },
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:web\"",

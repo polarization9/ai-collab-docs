@@ -1,4 +1,4 @@
-# AI Markdown Reviewer Mermaid 与阅读增强方案
+# Margent Mermaid 与阅读增强方案
 
 ## 1. 背景
 

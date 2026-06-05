@@ -1,8 +1,8 @@
-# AI Markdown Reviewer 第一阶段 PRD
+# Margent 第一阶段 PRD
 
 ## 1. 文档信息
 
-- 产品名称：AI Markdown Reviewer
+- 产品名称：Margent
 - 阶段名称：第一阶段，最小可运行阅读闭环
 - 文档日期：2026-06-02
 - 目标版本：v0.1.0

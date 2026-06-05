@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const binariesDir = path.join(rootDir, "src-tauri", "binaries");
 const targetTriple = getTargetTriple();
-const sidecarName = `ai-md-reviewer-server-${targetTriple}`;
+const sidecarName = `margent-server-${targetTriple}`;
 const sidecarPath = path.join(binariesDir, sidecarName);
 const cliPath = path.join(rootDir, "dist", "cli.js");
 
@@ -31,7 +31,7 @@ CLI_CANDIDATES=(
   "$SCRIPT_DIR/../../Resources/_up_/dist/cli.js"
   "$SCRIPT_DIR/dist/cli.js"
 )
-NODE_BIN="\${AI_MD_REVIEWER_NODE:-}"
+NODE_BIN="\${MARGENT_NODE:-}"
 if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" ]]; then
   NODE_BIN=""
   for CANDIDATE in "\${NODE_CANDIDATES[@]}"; do

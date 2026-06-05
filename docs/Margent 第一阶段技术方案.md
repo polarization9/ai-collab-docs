@@ -1,4 +1,4 @@
-# AI Markdown Reviewer 第一阶段技术方案
+# Margent 第一阶段技术方案
 
 ## 1. 技术目标
 

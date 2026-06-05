@@ -349,7 +349,7 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
         await client.start();
         await client.request("initialize", {
           clientInfo: {
-            name: "ai-md-reviewer",
+            name: "margent",
             title: "Margent",
             version: "0.1.0"
           },
@@ -842,6 +842,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getTurnTimeoutMs(): number {
-  const value = Number(process.env.AI_MD_CODEX_TURN_TIMEOUT_MS ?? 600000);
+  const value = Number(process.env.MARGENT_CODEX_TURN_TIMEOUT_MS ?? 600000);
   return Number.isFinite(value) && value > 0 ? value : 600000;
 }

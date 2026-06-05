@@ -1,8 +1,8 @@
-# AI Markdown Reviewer 前端组件清单与设计规范
+# Margent 前端组件清单与设计规范
 
 ## 1. 设计定位
 
-AI Markdown Reviewer 是一个本地 Markdown 审阅与 AI 协作工具，不是营销站，也不是重型编辑器。
+Margent 是一个本地 Markdown 审阅与 AI 协作工具，不是营销站，也不是重型编辑器。
 
 核心调性：
 

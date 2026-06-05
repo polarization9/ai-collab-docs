@@ -1,8 +1,8 @@
-# AI Markdown Reviewer 第三阶段文档轻编辑 PRD
+# Margent 第三阶段文档轻编辑 PRD
 
 ## 1. 文档信息
 
-- 产品名称：AI Markdown Reviewer
+- 产品名称：Margent
 - 阶段名称：第三阶段，文档轻编辑闭环
 - 文档日期：2026-06-03
 - 目标版本：v0.3.0

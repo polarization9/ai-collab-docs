@@ -1,3 +1,3 @@
 fn main() {
-    ai_md_reviewer_lib::run()
+    margent_lib::run()
 }

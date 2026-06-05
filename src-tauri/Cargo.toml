@@ -1,12 +1,12 @@
 [package]
-name = "ai-md-reviewer"
+name = "margent"
 version = "0.1.0"
 description = "Margent desktop shell"
 authors = ["Margent"]
 edition = "2021"
 
 [lib]
-name = "ai_md_reviewer_lib"
+name = "margent_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
