@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -8,6 +9,7 @@ import type {
 } from "../shared/appSettingsTypes.js";
 
 const MAX_RECENT_DOCUMENTS = 12;
+const appStateMutationQueues = new Map<string, Promise<unknown>>();
 
 const DEFAULT_SETTINGS: AppSettings = {
   language: "system",
@@ -23,10 +25,13 @@ export async function loadAppSettings(): Promise<AppSettings> {
 }
 
 export async function saveAppSettings(next: Partial<AppSettings>): Promise<AppSettings> {
-  const current = await loadAppSettings();
-  const settings = normalizeSettings({ ...current, ...next });
-  await writeJson(getSettingsPath(), settings);
-  return settings;
+  const settingsPath = getSettingsPath();
+  return withAppStateMutation(settingsPath, async () => {
+    const current = normalizeSettings(await readJson<Partial<AppSettings>>(settingsPath, {}));
+    const settings = normalizeSettings({ ...current, ...next });
+    await writeJson(settingsPath, settings);
+    return settings;
+  });
 }
 
 export async function listRecentDocuments(): Promise<RecentDocument[]> {
@@ -47,39 +52,45 @@ export async function listRecentDocuments(): Promise<RecentDocument[]> {
 }
 
 export async function rememberRecentDocument(documentPath: string): Promise<void> {
-  const existing = await listRecentDocuments();
-  const normalizedPath = path.resolve(documentPath);
-  const next = [
-    {
-      path: normalizedPath,
-      name: path.basename(normalizedPath),
-      lastOpenedAt: new Date().toISOString()
-    },
-    ...existing
+  const recentDocumentsPath = getRecentDocumentsPath();
+  await withAppStateMutation(recentDocumentsPath, async () => {
+    const existing = await listRecentDocuments();
+    const normalizedPath = path.resolve(documentPath);
+    const next = [
+      {
+        path: normalizedPath,
+        name: path.basename(normalizedPath),
+        lastOpenedAt: new Date().toISOString()
+      },
+      ...existing
+        .filter((item) => path.resolve(item.path) !== normalizedPath)
+        .map(({ path: itemPath, name, lastOpenedAt }) => ({
+          path: itemPath,
+          name,
+          lastOpenedAt
+        }))
+    ].slice(0, MAX_RECENT_DOCUMENTS);
+
+    await writeJson(recentDocumentsPath, next);
+  });
+}
+
+export async function removeRecentDocument(documentPath: string): Promise<RecentDocument[]> {
+  const recentDocumentsPath = getRecentDocumentsPath();
+  return withAppStateMutation(recentDocumentsPath, async () => {
+    const normalizedPath = path.resolve(documentPath);
+    const existing = await listRecentDocuments();
+    const next = existing
       .filter((item) => path.resolve(item.path) !== normalizedPath)
       .map(({ path: itemPath, name, lastOpenedAt }) => ({
         path: itemPath,
         name,
         lastOpenedAt
-      }))
-  ].slice(0, MAX_RECENT_DOCUMENTS);
+      }));
 
-  await writeJson(getRecentDocumentsPath(), next);
-}
-
-export async function removeRecentDocument(documentPath: string): Promise<RecentDocument[]> {
-  const normalizedPath = path.resolve(documentPath);
-  const existing = await listRecentDocuments();
-  const next = existing
-    .filter((item) => path.resolve(item.path) !== normalizedPath)
-    .map(({ path: itemPath, name, lastOpenedAt }) => ({
-      path: itemPath,
-      name,
-      lastOpenedAt
-    }));
-
-  await writeJson(getRecentDocumentsPath(), next);
-  return listRecentDocuments();
+    await writeJson(recentDocumentsPath, next);
+    return listRecentDocuments();
+  });
 }
 
 function normalizeSettings(value: Partial<AppSettings>): AppSettings {
@@ -121,10 +132,26 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const temporaryPath = path.join(
     path.dirname(filePath),
-    `.${path.basename(filePath)}.${process.pid}.tmp`
+    `.${path.basename(filePath)}.${process.pid}.${crypto.randomUUID()}.tmp`
   );
   await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await fs.rename(temporaryPath, filePath);
+}
+
+function withAppStateMutation<T>(
+  filePath: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  const queueKey = path.resolve(filePath);
+  const previous = appStateMutationQueues.get(queueKey) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(mutation);
+  const queued = next.catch(() => undefined).then(() => {
+    if (appStateMutationQueues.get(queueKey) === queued) {
+      appStateMutationQueues.delete(queueKey);
+    }
+  });
+  appStateMutationQueues.set(queueKey, queued);
+  return next;
 }
 
 function getSettingsPath(): string {

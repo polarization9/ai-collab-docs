@@ -40,12 +40,14 @@ import {
   loadReviewFile,
   ReplyNotFoundError,
   ReviewEventNotFoundError,
-  saveReviewFile,
   listReviewEvents,
+  replaceReviewFile,
+  saveReviewFile,
   updateAnnotation,
   updateAnnotationReply,
   updateReviewEvent,
-  updateAnnotationStatus
+  updateAnnotationStatus,
+  withReviewFileMutation
 } from "./review.js";
 import type { UpdateCodexLinkRequest } from "../shared/codexTypes.js";
 import type { SaveDocumentRequest } from "../shared/editTypes.js";
@@ -265,7 +267,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
   app.put("/api/review", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
-      response.json(await saveReviewFile(currentMarkdownPath, request.body as ReviewFile));
+      response.json(await replaceReviewFile(currentMarkdownPath, request.body as ReviewFile));
     } catch (error) {
       sendApiError(response, error);
     }
@@ -561,11 +563,13 @@ async function loadDocumentAndRepairExternalChanges(
   const previousContent = documentContentCache.get(markdownPath);
 
   if (previousContent !== undefined && previousContent !== document.content) {
-    const review = await loadReviewFile(markdownPath);
-    const repaired = repairReviewAnchors(review, previousContent, document.content);
-    if (repaired.review.annotations.length > 0) {
-      await saveReviewFile(markdownPath, repaired.review);
-    }
+    await withReviewFileMutation(markdownPath, async () => {
+      const review = await loadReviewFile(markdownPath);
+      const repaired = repairReviewAnchors(review, previousContent, document.content);
+      if (repaired.review.annotations.length > 0) {
+        await saveReviewFile(markdownPath, repaired.review);
+      }
+    });
   }
 
   documentContentCache.set(markdownPath, document.content);

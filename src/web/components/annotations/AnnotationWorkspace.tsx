@@ -317,10 +317,11 @@ export function AnnotationWorkspace({
     void reloadDocumentFromDisk();
   }, [draft, editorAnnotationDraft, isInteractingWithDocument, reloadDocumentFromDisk]);
 
-  const captureSelection = () => {
+  const captureSelection = useCallback(() => {
     if (isEditing) {
       return;
     }
+
     window.setTimeout(() => {
       const container = contentRef.current;
       if (!container) {
@@ -328,7 +329,20 @@ export function AnnotationWorkspace({
       }
       setDraft(captureAnnotationDraft(container, document.headings));
     }, 0);
-  };
+  }, [document.headings, isEditing]);
+
+  useEffect(() => {
+    if (isEditing) {
+      return;
+    }
+
+    window.document.addEventListener("mouseup", captureSelection);
+    window.addEventListener("keyup", captureSelection);
+    return () => {
+      window.document.removeEventListener("mouseup", captureSelection);
+      window.removeEventListener("keyup", captureSelection);
+    };
+  }, [captureSelection, isEditing]);
 
   const selectAnnotation = (annotationId: string) => {
     setIsSidebarOpen(true);
@@ -671,12 +685,7 @@ export function AnnotationWorkspace({
             />
           </section>
         ) : (
-          <section
-            className="review-document-surface"
-            ref={contentRef}
-            onMouseUp={captureSelection}
-            onKeyUp={captureSelection}
-          >
+          <section className="review-document-surface" ref={contentRef}>
             <DocumentViewer document={document} />
             <AnnotationLayer
               annotations={annotations}

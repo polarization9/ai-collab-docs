@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import type {
   CodexDocumentLink,
   CodexLinkResponse,
@@ -11,6 +12,7 @@ import type {
 import { getCodexLinkPath } from "./paths.js";
 
 const CODEX_LINK_VERSION = 1;
+const codexLinkMutationQueues = new Map<string, Promise<unknown>>();
 
 export async function loadCodexDocumentLink(
   markdownPath: string
@@ -43,7 +45,7 @@ export async function saveCodexDocumentLink(
   const codexLinkPath = getCodexLinkPath(markdownPath);
   const temporaryPath = path.join(
     path.dirname(codexLinkPath),
-    `.${path.basename(codexLinkPath)}.${process.pid}.tmp`
+    `.${path.basename(codexLinkPath)}.${process.pid}.${crypto.randomUUID()}.tmp`
   );
 
   await fs.writeFile(temporaryPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
@@ -55,32 +57,54 @@ export async function updateCodexDocumentLink(
   markdownPath: string,
   request: UpdateCodexLinkRequest
 ): Promise<CodexDocumentLink> {
-  const existing = await loadCodexDocumentLink(markdownPath);
-  const base = existing ?? createEmptyCodexDocumentLink(markdownPath);
-  const updated: CodexDocumentLink = {
-    ...base,
-    source: request.source ? normalizeSource(request.source) : base.source,
-    target: request.target ? normalizeTarget(request.target) : base.target,
-    bridge: request.bridge
-      ? {
-          ...base.bridge,
-          ...request.bridge
-        }
-      : base.bridge
-  };
-
-  if (updated.source && !updated.target) {
-    updated.target = {
-      type: "source",
-      threadId: updated.source.threadId,
-      cwd: updated.source.cwd,
-      configuredAt: updated.source.updatedAt ?? updated.source.createdAt,
-      configuredBy: "codex",
-      configuredVia: "source"
+  return withCodexLinkMutation(markdownPath, async () => {
+    const existing = await loadCodexDocumentLink(markdownPath);
+    const base = existing ?? createEmptyCodexDocumentLink(markdownPath);
+    const updated: CodexDocumentLink = {
+      ...base,
+      source: request.source ? normalizeSource(request.source) : base.source,
+      target: request.target ? normalizeTarget(request.target) : base.target,
+      bridge: request.bridge
+        ? {
+            ...base.bridge,
+            ...request.bridge
+          }
+        : base.bridge
     };
-  }
 
-  return saveCodexDocumentLink(markdownPath, updated);
+    if (updated.source && !updated.target) {
+      updated.target = {
+        type: "source",
+        threadId: updated.source.threadId,
+        cwd: updated.source.cwd,
+        configuredAt: updated.source.updatedAt ?? updated.source.createdAt,
+        configuredBy: "codex",
+        configuredVia: "source"
+      };
+    }
+
+    return saveCodexDocumentLink(markdownPath, updated);
+  });
+}
+
+export async function applyDiscoveredCodexSource(
+  markdownPath: string,
+  source: NonNullable<CodexDocumentLink["source"]>,
+  target: CodexTargetReference
+): Promise<CodexDocumentLink> {
+  return withCodexLinkMutation(markdownPath, async () => {
+    const existing = await loadCodexDocumentLink(markdownPath);
+    if (existing?.source?.threadId) {
+      return existing;
+    }
+
+    const base = existing ?? createEmptyCodexDocumentLink(markdownPath);
+    return saveCodexDocumentLink(markdownPath, {
+      ...base,
+      source,
+      target
+    });
+  });
 }
 
 export async function getCodexLinkResponse(markdownPath: string): Promise<CodexLinkResponse> {
@@ -168,55 +192,57 @@ export async function bindCodexThread(
     autoSendNewAnnotations?: boolean;
   }
 ): Promise<CodexDocumentLink> {
-  const threadId = normalizeOptionalString(input.threadId ?? getCurrentCodexThreadId());
-  const cwd = normalizeOptionalString(input.cwd ?? getCurrentCodexCwd());
+  return withCodexLinkMutation(markdownPath, async () => {
+    const threadId = normalizeOptionalString(input.threadId ?? getCurrentCodexThreadId());
+    const cwd = normalizeOptionalString(input.cwd ?? getCurrentCodexCwd());
 
-  if (!threadId) {
-    throw new Error("Unable to detect the current Codex thread id for automatic binding.");
-  }
-
-  const now = new Date().toISOString();
-  const existing = await loadCodexDocumentLink(markdownPath);
-  const base = existing ?? createEmptyCodexDocumentLink(markdownPath);
-  const source =
-    input.role === "source"
-      ? {
-          type: "codex" as const,
-          threadId,
-          cwd,
-          createdAt: base.source?.createdAt ?? now,
-          updatedAt: now
-        }
-      : base.source;
-  const target: CodexTargetReference =
-    input.role === "source"
-      ? {
-          type: "source",
-          threadId,
-          cwd,
-          configuredAt: now,
-          configuredBy: "codex",
-          configuredVia: "source"
-        }
-      : {
-          type: "successor",
-          threadId,
-          cwd,
-          configuredAt: now,
-          configuredBy: "codex",
-          configuredVia: "mcp-bind-instruction"
-        };
-
-  return saveCodexDocumentLink(markdownPath, {
-    ...base,
-    source,
-    target,
-    bridge: {
-      ...base.bridge,
-      ...(input.autoSendNewAnnotations === undefined
-        ? {}
-        : { autoSendNewAnnotations: input.autoSendNewAnnotations })
+    if (!threadId) {
+      throw new Error("Unable to detect the current Codex thread id for automatic binding.");
     }
+
+    const now = new Date().toISOString();
+    const existing = await loadCodexDocumentLink(markdownPath);
+    const base = existing ?? createEmptyCodexDocumentLink(markdownPath);
+    const source =
+      input.role === "source"
+        ? {
+            type: "codex" as const,
+            threadId,
+            cwd,
+            createdAt: base.source?.createdAt ?? now,
+            updatedAt: now
+          }
+        : base.source;
+    const target: CodexTargetReference =
+      input.role === "source"
+        ? {
+            type: "source",
+            threadId,
+            cwd,
+            configuredAt: now,
+            configuredBy: "codex",
+            configuredVia: "source"
+          }
+        : {
+            type: "successor",
+            threadId,
+            cwd,
+            configuredAt: now,
+            configuredBy: "codex",
+            configuredVia: "mcp-bind-instruction"
+          };
+
+    return saveCodexDocumentLink(markdownPath, {
+      ...base,
+      source,
+      target,
+      bridge: {
+        ...base.bridge,
+        ...(input.autoSendNewAnnotations === undefined
+          ? {}
+          : { autoSendNewAnnotations: input.autoSendNewAnnotations })
+      }
+    });
   });
 }
 
@@ -284,6 +310,22 @@ function normalizeTarget(target: CodexTargetReference): CodexTargetReference {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function withCodexLinkMutation<T>(
+  markdownPath: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  const queueKey = path.resolve(markdownPath);
+  const previous = codexLinkMutationQueues.get(queueKey) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(mutation);
+  const queued = next.catch(() => undefined).then(() => {
+    if (codexLinkMutationQueues.get(queueKey) === queued) {
+      codexLinkMutationQueues.delete(queueKey);
+    }
+  });
+  codexLinkMutationQueues.set(queueKey, queued);
+  return next;
 }
 
 function getCurrentCodexThreadId(): string | undefined {

@@ -27,7 +27,13 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/margent-server"],
-    "resources": ["../dist", "../node_modules", "resources/node"],
+    "resources": {
+      "../dist": "_up_/dist",
+      "../node_modules": "_up_/node_modules",
+      "resources/node": "resources/node",
+      "resources/en.lproj": "en.lproj",
+      "resources/zh-Hans.lproj": "zh-Hans.lproj"
+    },
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],
@@ -42,7 +48,8 @@
       }
     ],
     "macOS": {
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-"
     }
   },
   "plugins": {

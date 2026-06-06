@@ -1102,9 +1102,21 @@ select {
   min-height: 56px;
   margin: 0;
   padding: 7px 20px 0 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--document-tab-rail) 60%, var(--color-border-strong));
+  border-bottom: 0;
   background: var(--document-tab-rail);
   backdrop-filter: blur(14px);
+}
+
+.document-tabs::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--document-tab-rail) 56%, var(--color-border-strong));
+  content: "";
+  pointer-events: none;
 }
 
 :root[data-runtime="desktop"] .document-tabs {
@@ -1123,6 +1135,7 @@ select {
 
 :root[data-runtime="desktop"] .document-tabs-scroll {
   height: 36px;
+  padding: 0 14px;
 }
 
 :root[data-runtime="desktop"] .document-tab {
@@ -1169,6 +1182,8 @@ select {
 }
 
 .document-tabs-scroll {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: flex-end;
   flex: 1 1 auto;
@@ -1176,7 +1191,7 @@ select {
   height: 49px;
   min-width: 0;
   overflow-x: auto;
-  padding: 0 2px;
+  padding: 0 20px;
   scrollbar-width: none;
 }
 
@@ -1211,7 +1226,7 @@ select {
 }
 
 .document-tab-active {
-  z-index: 1;
+  z-index: 2;
   background: var(--document-tab-active-surface);
   color: var(--color-ink-strong);
 }
@@ -1315,6 +1330,8 @@ select {
 }
 
 .document-tab-open {
+  position: relative;
+  z-index: 1;
   display: inline-grid;
   width: 34px;
   height: 34px;
@@ -2670,11 +2687,11 @@ body.table-column-resizing {
 
 .annotation-sidebar {
   position: fixed;
-  top: 64px;
-  right: 20px;
+  top: 126px;
+  right: 38px;
   z-index: 61;
   width: min(360px, calc(100vw - 40px));
-  max-height: calc(100vh - 84px);
+  max-height: calc(100vh - 146px);
   overflow-y: auto;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -2692,8 +2709,8 @@ body.table-column-resizing {
 }
 
 .review-layout-editing .annotation-sidebar {
-  top: 64px;
-  max-height: calc(100vh - 84px);
+  top: 126px;
+  max-height: calc(100vh - 146px);
 }
 
 .annotation-sidebar svg {
@@ -2735,15 +2752,15 @@ body.table-column-resizing {
 
 .annotation-codex-route {
   display: flex;
-  min-height: 56px;
+  min-height: 60px;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 12px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-paper) 86%, transparent);
-  padding: 9px 10px;
+  background: color-mix(in srgb, var(--surface-control-muted) 72%, var(--color-paper));
+  padding: 10px 12px;
   transition:
     border-color 0.16s ease,
     background-color 0.16s ease;
@@ -2775,7 +2792,7 @@ body.table-column-resizing {
 .annotation-codex-route-copy strong {
   overflow: hidden;
   color: var(--color-ink-strong);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -2827,8 +2844,9 @@ body.table-column-resizing {
 
 .annotation-codex-route-actions {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .annotation-codex-monitor,
@@ -2837,9 +2855,9 @@ body.table-column-resizing {
   height: 30px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border);
+  border: 1px solid transparent;
   border-radius: 7px;
-  background: var(--color-paper-strong);
+  background: transparent;
   color: var(--color-ink);
   cursor: pointer;
   font-size: 12px;
@@ -2854,7 +2872,7 @@ body.table-column-resizing {
 
 .annotation-codex-monitor {
   gap: 6px;
-  padding: 0 8px;
+  padding: 0 6px;
 }
 
 .annotation-codex-route-button {
@@ -2916,8 +2934,8 @@ body.table-column-resizing {
 }
 
 .annotation-codex-monitor-on {
-  border-color: var(--color-border-strong);
-  background: var(--surface-selected-soft);
+  border-color: transparent;
+  background: transparent;
   color: var(--color-accent);
 }
 
@@ -2934,7 +2952,7 @@ body.table-column-resizing {
 .annotation-codex-route-button:hover,
 .annotation-codex-route-button:focus-visible {
   outline: 0;
-  border-color: var(--color-border-strong);
+  border-color: transparent;
   background: var(--surface-control-hover);
   color: var(--color-accent);
 }
@@ -4284,9 +4302,9 @@ body.table-column-resizing {
   }
 
   .annotation-sidebar {
-    top: 56px;
+    top: 66px;
     right: 14px;
     width: min(340px, calc(100vw - 28px));
-    max-height: calc(100vh - 70px);
+    max-height: calc(100vh - 80px);
   }
 }

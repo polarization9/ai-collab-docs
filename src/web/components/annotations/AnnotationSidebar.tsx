@@ -315,34 +315,25 @@ function getCodexRouteView(
     };
   }
 
-  const { connection, link } = codexLink;
-  const target = link?.target;
-  const threadId = target?.threadId ?? link?.source?.threadId ?? "";
-  const threadLabel = threadId ? ` · ${formatThreadId(threadId)}` : "";
-  const threadTitle = threadId ? `Codex thread: ${threadId}` : "";
+  const { connection } = codexLink;
 
   if (!connection.hasTarget) {
     return {
       tone: "unlinked",
-      label: t("codex.unlinked"),
+      label: t("codex.notDetected"),
       detail: t("codex.localOnly"),
       threadTitle: t("codex.localOnly")
     };
   }
 
-  const label = connection.targetType === "successor" ? t("codex.successor") : t("codex.source");
   const mode = connection.autoSendNewAnnotations ? t("codex.autoMode") : t("codex.manualMode");
 
   return {
     tone: connection.autoSendNewAnnotations ? "auto" : connection.targetType ?? "source",
-    label,
-    detail: `${mode}${threadLabel}`,
-    threadTitle: threadTitle || `${label} · ${mode}`
+    label: t("codex.detected"),
+    detail: mode,
+    threadTitle: mode
   };
-}
-
-function formatThreadId(threadId: string) {
-  return threadId.length > 10 ? `${threadId.slice(0, 10)}...` : threadId;
 }
 
 type AnnotationCardProps = {
@@ -728,7 +719,7 @@ function AnnotationCard({
           </button>
           <button type="button" onClick={sendToCodex} disabled={isSaving}>
             <AtSign size={13} />
-            @codex
+            Codex
           </button>
         </div>
       ) : null}

@@ -211,7 +211,7 @@ function AppContent({
 
     try {
       if (isTauriRuntime()) {
-        const path = await pickMarkdownFile();
+        const path = await pickMarkdownFile(settings.language);
         if (!path) {
           setState((current) => (current.status === "ready" ? current : { status: "empty" }));
           return;
@@ -241,7 +241,7 @@ function AppContent({
             }
       );
     }
-  }, [reloadRecentDocuments, t]);
+  }, [reloadRecentDocuments, settings.language, t]);
 
   const openSettings = useCallback(() => {
     void openSettingsWindow();

@@ -108,6 +108,8 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   "codex.readFailed": "Unable to read status",
   "codex.checking": "Checking conversation link",
   "codex.readingLocal": "Reading local connection",
+  "codex.detected": "Matching Codex conversation detected",
+  "codex.notDetected": "No matching Codex conversation detected",
   "codex.unlinked": "No linked conversation",
   "codex.localOnly": "Annotations stay local",
   "codex.successor": "Successor conversation",

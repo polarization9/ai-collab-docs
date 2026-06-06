@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
 import type {
   AddReplyRequest,
   AnnotationStatus,
@@ -36,6 +37,7 @@ const OPEN_EVENT_STATUSES = new Set<ReviewEventDeliveryStatus>([
   "sent",
   "processing"
 ]);
+const reviewMutationQueues = new Map<string, Promise<unknown>>();
 
 export async function loadReviewFile(markdownPath: string): Promise<ReviewFile> {
   const reviewPath = getReviewPath(markdownPath);
@@ -66,31 +68,47 @@ export async function saveReviewFile(markdownPath: string, review: ReviewFile): 
   return normalized;
 }
 
+export async function replaceReviewFile(
+  markdownPath: string,
+  review: ReviewFile
+): Promise<ReviewFile> {
+  return withReviewFileMutation(markdownPath, () => saveReviewFile(markdownPath, review));
+}
+
+export function withReviewFileMutation<T>(
+  markdownPath: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  return withReviewMutation(markdownPath, mutation);
+}
+
 export async function createAnnotation(
   markdownPath: string,
   request: CreateAnnotationRequest
 ): Promise<ReviewFile> {
-  const body = request.body.trim();
-  if (!body) {
-    throw new Error("Annotation body is required.");
-  }
+  return withReviewMutation(markdownPath, async () => {
+    const body = request.body.trim();
+    if (!body) {
+      throw new Error("Annotation body is required.");
+    }
 
-  const review = await loadReviewFile(markdownPath);
-  const now = new Date().toISOString();
-  const annotation: ReviewAnnotation = {
-    id: createId("ann"),
-    status: "open",
-    author: request.author ?? DEFAULT_USER_AUTHOR,
-    body,
-    anchor: prepareAnchorForCreate(request.anchor),
-    replies: [],
-    createdAt: now,
-    updatedAt: now
-  };
+    const review = await loadReviewFile(markdownPath);
+    const now = new Date().toISOString();
+    const annotation: ReviewAnnotation = {
+      id: createId("ann"),
+      status: "open",
+      author: request.author ?? DEFAULT_USER_AUTHOR,
+      body,
+      anchor: prepareAnchorForCreate(request.anchor),
+      replies: [],
+      createdAt: now,
+      updatedAt: now
+    };
 
-  review.annotations.push(annotation);
-  review.updatedAt = now;
-  return saveReviewFile(markdownPath, review);
+    review.annotations.push(annotation);
+    review.updatedAt = now;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function addAnnotationReply(
@@ -98,29 +116,31 @@ export async function addAnnotationReply(
   annotationId: string,
   request: AddReplyRequest
 ): Promise<ReviewFile> {
-  const body = request.body.trim();
-  if (!body) {
-    throw new Error("Reply body is required.");
-  }
+  return withReviewMutation(markdownPath, async () => {
+    const body = request.body.trim();
+    if (!body) {
+      throw new Error("Reply body is required.");
+    }
 
-  const review = await loadReviewFile(markdownPath);
-  const annotation = findAnnotation(review, annotationId);
-  const replyTo = request.replyToReplyId
-    ? createReplyTarget(findReply(annotation, request.replyToReplyId))
-    : undefined;
-  const now = new Date().toISOString();
-  const reply: ReviewReply = {
-    id: createId("reply"),
-    author: request.author ?? DEFAULT_AGENT_AUTHOR,
-    body,
-    ...(replyTo ? { replyTo } : {}),
-    createdAt: now
-  };
+    const review = await loadReviewFile(markdownPath);
+    const annotation = findAnnotation(review, annotationId);
+    const replyTo = request.replyToReplyId
+      ? createReplyTarget(findReply(annotation, request.replyToReplyId))
+      : undefined;
+    const now = new Date().toISOString();
+    const reply: ReviewReply = {
+      id: createId("reply"),
+      author: request.author ?? DEFAULT_AGENT_AUTHOR,
+      body,
+      ...(replyTo ? { replyTo } : {}),
+      createdAt: now
+    };
 
-  annotation.replies.push(reply);
-  annotation.updatedAt = now;
-  review.updatedAt = now;
-  return saveReviewFile(markdownPath, review);
+    annotation.replies.push(reply);
+    annotation.updatedAt = now;
+    review.updatedAt = now;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function updateAnnotation(
@@ -128,35 +148,39 @@ export async function updateAnnotation(
   annotationId: string,
   request: UpdateAnnotationRequest
 ): Promise<ReviewFile> {
-  const body = request.body.trim();
-  if (!body) {
-    throw new Error("Annotation body is required.");
-  }
+  return withReviewMutation(markdownPath, async () => {
+    const body = request.body.trim();
+    if (!body) {
+      throw new Error("Annotation body is required.");
+    }
 
-  const review = await loadReviewFile(markdownPath);
-  const annotation = findAnnotation(review, annotationId);
-  const now = new Date().toISOString();
+    const review = await loadReviewFile(markdownPath);
+    const annotation = findAnnotation(review, annotationId);
+    const now = new Date().toISOString();
 
-  annotation.body = body;
-  annotation.updatedAt = now;
-  review.updatedAt = now;
-  return saveReviewFile(markdownPath, review);
+    annotation.body = body;
+    annotation.updatedAt = now;
+    review.updatedAt = now;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function deleteAnnotation(
   markdownPath: string,
   annotationId: string
 ): Promise<ReviewFile> {
-  const review = await loadReviewFile(markdownPath);
-  const index = review.annotations.findIndex((item) => item.id === annotationId);
-  if (index === -1) {
-    throw new AnnotationNotFoundError(annotationId);
-  }
+  return withReviewMutation(markdownPath, async () => {
+    const review = await loadReviewFile(markdownPath);
+    const index = review.annotations.findIndex((item) => item.id === annotationId);
+    if (index === -1) {
+      throw new AnnotationNotFoundError(annotationId);
+    }
 
-  markOpenAnnotationEventsIgnored(review, annotationId);
-  review.annotations.splice(index, 1);
-  review.updatedAt = new Date().toISOString();
-  return saveReviewFile(markdownPath, review);
+    markOpenAnnotationEventsIgnored(review, annotationId);
+    review.annotations.splice(index, 1);
+    review.updatedAt = new Date().toISOString();
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function updateAnnotationReply(
@@ -165,21 +189,23 @@ export async function updateAnnotationReply(
   replyId: string,
   request: UpdateReplyRequest
 ): Promise<ReviewFile> {
-  const body = request.body.trim();
-  if (!body) {
-    throw new Error("Reply body is required.");
-  }
+  return withReviewMutation(markdownPath, async () => {
+    const body = request.body.trim();
+    if (!body) {
+      throw new Error("Reply body is required.");
+    }
 
-  const review = await loadReviewFile(markdownPath);
-  const annotation = findAnnotation(review, annotationId);
-  const reply = findReply(annotation, replyId);
-  const now = new Date().toISOString();
+    const review = await loadReviewFile(markdownPath);
+    const annotation = findAnnotation(review, annotationId);
+    const reply = findReply(annotation, replyId);
+    const now = new Date().toISOString();
 
-  reply.body = body;
-  reply.updatedAt = now;
-  annotation.updatedAt = now;
-  review.updatedAt = now;
-  return saveReviewFile(markdownPath, review);
+    reply.body = body;
+    reply.updatedAt = now;
+    annotation.updatedAt = now;
+    review.updatedAt = now;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function updateAnnotationStatus(
@@ -187,51 +213,55 @@ export async function updateAnnotationStatus(
   annotationId: string,
   request: UpdateAnnotationStatusRequest
 ): Promise<ReviewFile> {
-  assertAnnotationStatus(request.status);
+  return withReviewMutation(markdownPath, async () => {
+    assertAnnotationStatus(request.status);
 
-  const review = await loadReviewFile(markdownPath);
-  const annotation = findAnnotation(review, annotationId);
-  const now = new Date().toISOString();
+    const review = await loadReviewFile(markdownPath);
+    const annotation = findAnnotation(review, annotationId);
+    const now = new Date().toISOString();
 
-  annotation.status = request.status;
-  annotation.updatedAt = now;
-  if (request.status === "resolved") {
-    annotation.resolvedAt = now;
-    markOpenAnnotationEventsIgnored(review, annotationId, ["queued"]);
-  } else {
-    delete annotation.resolvedAt;
-  }
-  review.updatedAt = now;
-  return saveReviewFile(markdownPath, review);
+    annotation.status = request.status;
+    annotation.updatedAt = now;
+    if (request.status === "resolved") {
+      annotation.resolvedAt = now;
+      markOpenAnnotationEventsIgnored(review, annotationId, ["queued"]);
+    } else {
+      delete annotation.resolvedAt;
+    }
+    review.updatedAt = now;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function createReviewEvent(
   markdownPath: string,
   request: CreateReviewEventRequest
 ): Promise<ReviewFile> {
-  const review = await loadReviewFile(markdownPath);
-  findAnnotation(review, request.annotationId);
-  const link = await loadCodexDocumentLink(markdownPath);
-  const target = resolveCodexTarget(link);
-  const now = new Date().toISOString();
-  const event: ReviewEvent = {
-    id: createId("evt"),
-    type: "annotation_created",
-    documentPath: markdownPath,
-    annotationId: request.annotationId,
-    sourceThreadId: link?.source?.threadId,
-    targetThreadId: target?.threadId,
-    targetType: target?.type,
-    deliveryMode: request.deliveryMode,
-    deliveryStatus: "queued",
-    attemptCount: 0,
-    createdAt: now,
-    updatedAt: now
-  };
+  return withReviewMutation(markdownPath, async () => {
+    const review = await loadReviewFile(markdownPath);
+    findAnnotation(review, request.annotationId);
+    const link = await loadCodexDocumentLink(markdownPath);
+    const target = resolveCodexTarget(link);
+    const now = new Date().toISOString();
+    const event: ReviewEvent = {
+      id: createId("evt"),
+      type: "annotation_created",
+      documentPath: markdownPath,
+      annotationId: request.annotationId,
+      sourceThreadId: link?.source?.threadId,
+      targetThreadId: target?.threadId,
+      targetType: target?.type,
+      deliveryMode: request.deliveryMode,
+      deliveryStatus: "queued",
+      attemptCount: 0,
+      createdAt: now,
+      updatedAt: now
+    };
 
-  review.events = [...(review.events ?? []), event];
-  review.updatedAt = now;
-  return saveReviewFile(markdownPath, review);
+    review.events = [...(review.events ?? []), event];
+    review.updatedAt = now;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function listReviewEvents(
@@ -263,11 +293,13 @@ export async function updateReviewEvent(
   eventId: string,
   request: UpdateReviewEventRequest
 ): Promise<ReviewFile> {
-  const review = await loadReviewFile(markdownPath);
-  const event = findReviewEvent(review, eventId);
-  applyEventUpdate(event, request);
-  review.updatedAt = event.updatedAt;
-  return saveReviewFile(markdownPath, review);
+  return withReviewMutation(markdownPath, async () => {
+    const review = await loadReviewFile(markdownPath);
+    const event = findReviewEvent(review, eventId);
+    applyEventUpdate(event, request);
+    review.updatedAt = event.updatedAt;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function markReviewEventDelivering(
@@ -275,49 +307,53 @@ export async function markReviewEventDelivering(
   eventId: string,
   adapter?: NonNullable<ReviewEvent["delivery"]>["adapter"]
 ): Promise<ReviewFile> {
-  const review = await loadReviewFile(markdownPath);
-  const event = findReviewEvent(review, eventId);
-  const now = new Date().toISOString();
-  event.deliveryStatus = "delivering";
-  event.attemptCount += 1;
-  event.updatedAt = now;
-  event.lastError = undefined;
-  event.delivery = {
-    ...event.delivery,
-    adapter,
-    lastAttemptAt: now
-  };
-  review.updatedAt = now;
-  return saveReviewFile(markdownPath, review);
+  return withReviewMutation(markdownPath, async () => {
+    const review = await loadReviewFile(markdownPath);
+    const event = findReviewEvent(review, eventId);
+    const now = new Date().toISOString();
+    event.deliveryStatus = "delivering";
+    event.attemptCount += 1;
+    event.updatedAt = now;
+    event.lastError = undefined;
+    event.delivery = {
+      ...event.delivery,
+      adapter,
+      lastAttemptAt: now
+    };
+    review.updatedAt = now;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function recoverStaleDeliveringEvents(markdownPath: string): Promise<ReviewFile> {
-  const review = await loadReviewFile(markdownPath);
-  const now = Date.now();
-  const updatedAt = new Date(now).toISOString();
-  let didChange = false;
+  return withReviewMutation(markdownPath, async () => {
+    const review = await loadReviewFile(markdownPath);
+    const now = Date.now();
+    const updatedAt = new Date(now).toISOString();
+    let didChange = false;
 
-  for (const event of review.events ?? []) {
-    if (
-      event.deliveryStatus !== "delivering" ||
-      event.delivery?.turnId ||
-      now - new Date(event.updatedAt).getTime() < STALE_DELIVERING_EVENT_MS
-    ) {
-      continue;
+    for (const event of review.events ?? []) {
+      if (
+        event.deliveryStatus !== "delivering" ||
+        event.delivery?.turnId ||
+        now - new Date(event.updatedAt).getTime() < STALE_DELIVERING_EVENT_MS
+      ) {
+        continue;
+      }
+
+      event.deliveryStatus = "queued";
+      event.lastError = "Previous delivery attempt did not finish before the App restarted.";
+      event.updatedAt = updatedAt;
+      didChange = true;
     }
 
-    event.deliveryStatus = "queued";
-    event.lastError = "Previous delivery attempt did not finish before the App restarted.";
-    event.updatedAt = updatedAt;
-    didChange = true;
-  }
+    if (!didChange) {
+      return review;
+    }
 
-  if (!didChange) {
-    return review;
-  }
-
-  review.updatedAt = updatedAt;
-  return saveReviewFile(markdownPath, review);
+    review.updatedAt = updatedAt;
+    return saveReviewFile(markdownPath, review);
+  });
 }
 
 export async function markReviewEventHandled(
@@ -512,6 +548,22 @@ function isNotFoundError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
   );
+}
+
+function withReviewMutation<T>(
+  markdownPath: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  const queueKey = path.resolve(markdownPath);
+  const previous = reviewMutationQueues.get(queueKey) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(mutation);
+  const queued = next.catch(() => undefined).then(() => {
+    if (reviewMutationQueues.get(queueKey) === queued) {
+      reviewMutationQueues.delete(queueKey);
+    }
+  });
+  reviewMutationQueues.set(queueKey, queued);
+  return next;
 }
 
 export class AnnotationNotFoundError extends Error {

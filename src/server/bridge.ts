@@ -755,6 +755,10 @@ class CodexAppServerClient {
 let cachedCodexCommand: string | null | undefined;
 
 async function resolveCodexCommand(): Promise<string | null> {
+  if (process.env.MARGENT_DISABLE_CODEX_BRIDGE === "1") {
+    return null;
+  }
+
   if (cachedCodexCommand !== undefined) {
     return cachedCodexCommand;
   }

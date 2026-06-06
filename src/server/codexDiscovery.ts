@@ -4,9 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import type { CodexDocumentLink } from "../shared/codexTypes.js";
 import {
-  createEmptyCodexDocumentLink,
-  loadCodexDocumentLink,
-  saveCodexDocumentLink
+  applyDiscoveredCodexSource,
+  loadCodexDocumentLink
 } from "./codexLink.js";
 
 type SessionCandidate = {
@@ -33,17 +32,16 @@ export async function discoverCodexSourceForDocument(
 
   const candidate = candidates[0];
   const now = new Date().toISOString();
-  const base = existing ?? createEmptyCodexDocumentLink(markdownPath);
-  return saveCodexDocumentLink(markdownPath, {
-    ...base,
-    source: {
+  return applyDiscoveredCodexSource(
+    markdownPath,
+    {
       type: "codex",
       threadId: candidate.threadId,
       cwd: candidate.cwd,
       createdAt: now,
       updatedAt: candidate.updatedAt
     },
-    target: {
+    {
       type: "source",
       threadId: candidate.threadId,
       cwd: candidate.cwd,
@@ -51,7 +49,7 @@ export async function discoverCodexSourceForDocument(
       configuredBy: "codex",
       configuredVia: "local-log-discovery"
     }
-  });
+  );
 }
 
 async function findExactPathCandidates(markdownPath: string): Promise<SessionCandidate[]> {

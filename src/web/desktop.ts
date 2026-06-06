@@ -1,4 +1,4 @@
-import type { AppSettings } from "../shared/appSettingsTypes";
+import type { AppLanguage, AppSettings, ResolvedLocale } from "../shared/appSettingsTypes";
 
 type OpenFilesListener = (paths: string[]) => void;
 type AppMenuCommand = "open-file" | "open-settings";
@@ -30,19 +30,20 @@ export function preloadMarkdownFilePicker(): void {
   void loadDialogModule();
 }
 
-export async function pickMarkdownFile(): Promise<string | null> {
+export async function pickMarkdownFile(language: AppLanguage = "system"): Promise<string | null> {
   if (!isTauriRuntime()) {
     return null;
   }
 
   const { open } = await loadDialogModule();
+  const labels = getMarkdownFilePickerLabels(language);
   const selected = await open({
-    title: getMarkdownFilePickerTitle(),
+    title: labels.title,
     multiple: false,
     directory: false,
     filters: [
       {
-        name: "Markdown",
+        name: labels.filterName,
         extensions: ["md", "markdown"]
       }
     ]
@@ -51,12 +52,29 @@ export async function pickMarkdownFile(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
-function getMarkdownFilePickerTitle(): string {
+function getMarkdownFilePickerLabels(language: AppLanguage): {
+  title: string;
+  filterName: string;
+} {
+  return resolveDesktopLocale(language) === "zh-CN"
+    ? {
+        title: "选择 Markdown 文件",
+        filterName: "Markdown 文件"
+      }
+    : {
+        title: "Choose Markdown File",
+        filterName: "Markdown"
+      };
+}
+
+function resolveDesktopLocale(language: AppLanguage): ResolvedLocale {
+  if (language === "zh-CN" || language === "en-US") {
+    return language;
+  }
+
   const browserLanguage =
     typeof navigator === "undefined" ? "zh-CN" : navigator.language;
-  return browserLanguage.toLowerCase().startsWith("zh")
-    ? "选择 Markdown 文件"
-    : "Choose Markdown File";
+  return browserLanguage.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
 }
 
 export async function getInitialOpenedFiles(): Promise<string[]> {

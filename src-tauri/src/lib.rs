@@ -1,6 +1,8 @@
 use std::{
+    fs,
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
+    path::PathBuf,
     sync::Mutex,
     time::Duration,
 };
@@ -8,7 +10,8 @@ use std::{
 use serde::Deserialize;
 use tauri::{
     menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
-    AppHandle, Emitter, LogicalPosition, Manager, RunEvent, TitleBarStyle, Url, WebviewUrl,
+    AppHandle, Emitter, Listener, LogicalPosition, Manager, RunEvent, TitleBarStyle, Url,
+    WebviewUrl,
     WebviewWindowBuilder,
 };
 use tauri_plugin_shell::{process::CommandEvent, process::CommandChild, ShellExt};
@@ -37,6 +40,11 @@ struct ServerReadyMessage {
     #[serde(rename = "type")]
     kind: String,
     url: String,
+}
+
+#[derive(Deserialize)]
+struct StoredAppSettings {
+    language: Option<String>,
 }
 
 #[tauri::command]
@@ -89,6 +97,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![opened_files, open_settings_window])
         .setup(|app| {
             let app_handle = app.handle().clone();
+            register_native_settings_listener(&app_handle);
             let startup_paths = std::env::args()
                 .filter_map(|arg| normalize_opened_file_arg(&arg))
                 .collect::<Vec<_>>();
@@ -130,7 +139,7 @@ pub fn run() {
 }
 
 fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let labels = menu_labels();
+    let labels = native_labels();
     let settings = MenuItemBuilder::with_id("margent-open-settings", labels.settings)
         .accelerator("CmdOrCtrl+,")
         .build(app)?;
@@ -156,7 +165,7 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &open_file,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::close_window(app, None)?,
+            &PredefinedMenuItem::close_window(app, Some(labels.close_window))?,
         ],
     )?;
 
@@ -165,13 +174,13 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         labels.edit,
         true,
         &[
-            &PredefinedMenuItem::undo(app, None)?,
-            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::undo(app, Some(labels.undo))?,
+            &PredefinedMenuItem::redo(app, Some(labels.redo))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::cut(app, None)?,
-            &PredefinedMenuItem::copy(app, None)?,
-            &PredefinedMenuItem::paste(app, None)?,
-            &PredefinedMenuItem::select_all(app, None)?,
+            &PredefinedMenuItem::cut(app, Some(labels.cut))?,
+            &PredefinedMenuItem::copy(app, Some(labels.copy))?,
+            &PredefinedMenuItem::paste(app, Some(labels.paste))?,
+            &PredefinedMenuItem::select_all(app, Some(labels.select_all))?,
         ],
     )?;
 
@@ -180,9 +189,9 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         labels.window,
         true,
         &[
-            &PredefinedMenuItem::minimize(app, None)?,
-            &PredefinedMenuItem::maximize(app, None)?,
-            &PredefinedMenuItem::fullscreen(app, None)?,
+            &PredefinedMenuItem::minimize(app, Some(labels.minimize))?,
+            &PredefinedMenuItem::maximize(app, Some(labels.zoom))?,
+            &PredefinedMenuItem::fullscreen(app, Some(labels.fullscreen))?,
         ],
     )?;
 
@@ -191,33 +200,100 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 struct MenuLabels {
     settings: &'static str,
+    settings_window_title: &'static str,
     quit: &'static str,
     open_file: &'static str,
     file: &'static str,
     edit: &'static str,
     window: &'static str,
+    close_window: &'static str,
+    undo: &'static str,
+    redo: &'static str,
+    cut: &'static str,
+    copy: &'static str,
+    paste: &'static str,
+    select_all: &'static str,
+    minimize: &'static str,
+    zoom: &'static str,
+    fullscreen: &'static str,
 }
 
-fn menu_labels() -> MenuLabels {
-    if is_system_chinese() {
+fn native_labels() -> MenuLabels {
+    if resolve_native_locale() == NativeLocale::Zh {
         return MenuLabels {
             settings: "设置...",
+            settings_window_title: "Margent 设置",
             quit: "退出 Margent",
             open_file: "打开 Markdown 文件...",
             file: "文件",
             edit: "编辑",
             window: "窗口",
+            close_window: "关闭窗口",
+            undo: "撤销",
+            redo: "重做",
+            cut: "剪切",
+            copy: "复制",
+            paste: "粘贴",
+            select_all: "全选",
+            minimize: "最小化",
+            zoom: "缩放",
+            fullscreen: "进入全屏幕",
         };
     }
 
     MenuLabels {
         settings: "Settings...",
+        settings_window_title: "Margent Settings",
         quit: "Quit Margent",
         open_file: "Open Markdown File...",
         file: "File",
         edit: "Edit",
         window: "Window",
+        close_window: "Close Window",
+        undo: "Undo",
+        redo: "Redo",
+        cut: "Cut",
+        copy: "Copy",
+        paste: "Paste",
+        select_all: "Select All",
+        minimize: "Minimize",
+        zoom: "Zoom",
+        fullscreen: "Enter Full Screen",
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeLocale {
+    Zh,
+    En,
+}
+
+fn resolve_native_locale() -> NativeLocale {
+    match read_configured_language().as_deref() {
+        Some("zh-CN") => NativeLocale::Zh,
+        Some("en-US") => NativeLocale::En,
+        _ => {
+            if is_system_chinese() {
+                NativeLocale::Zh
+            } else {
+                NativeLocale::En
+            }
+        }
+    }
+}
+
+fn read_configured_language() -> Option<String> {
+    let settings_path = get_app_data_dir().join("settings.json");
+    let raw = fs::read_to_string(settings_path).ok()?;
+    let settings = serde_json::from_str::<StoredAppSettings>(&raw).ok()?;
+    settings.language
+}
+
+fn get_app_data_dir() -> PathBuf {
+    std::env::var_os("MARGENT_APP_DATA_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".margent")))
+        .unwrap_or_else(|| PathBuf::from(".margent"))
 }
 
 fn is_system_chinese() -> bool {
@@ -242,6 +318,24 @@ fn is_system_chinese() -> bool {
     }
 
     false
+}
+
+fn register_native_settings_listener(app: &AppHandle) {
+    let app_handle = app.clone();
+    app.listen("margent-settings-updated", move |_| {
+        if let Err(error) = refresh_native_language(&app_handle) {
+            eprintln!("failed to refresh native Margent language: {error}");
+        }
+    });
+}
+
+fn refresh_native_language(app: &AppHandle) -> tauri::Result<()> {
+    let menu = build_app_menu(app)?;
+    app.set_menu(menu)?;
+    if let Some(window) = app.get_webview_window("settings") {
+        window.set_title(native_labels().settings_window_title)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -410,11 +504,7 @@ fn show_settings_window(app: &AppHandle) -> tauri::Result<()> {
         .clone()
         .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("Margent server is not ready.")))?;
     let url = format!("{}/?settingsWindow=1&desktopToken={}", server_url, state.token);
-    let title = if is_system_chinese() {
-        "Margent 设置"
-    } else {
-        "Margent Settings"
-    };
+    let title = native_labels().settings_window_title;
 
     WebviewWindowBuilder::new(
         app,

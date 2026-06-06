@@ -106,6 +106,8 @@ export const zhCN = {
   "codex.readFailed": "状态读取失败",
   "codex.checking": "检查会话关联",
   "codex.readingLocal": "正在读取本地连接",
+  "codex.detected": "已检测到对应 Codex 会话",
+  "codex.notDetected": "未检测到对应 Codex 会话",
   "codex.unlinked": "未关联会话",
   "codex.localOnly": "批注仅保存在本地",
   "codex.successor": "接续会话",
