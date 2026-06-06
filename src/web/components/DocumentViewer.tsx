@@ -153,7 +153,7 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
       return (
         <img
           className="document-image"
-          src={resolveDocumentImageSrc(src)}
+          src={resolveDocumentImageSrc(src, document.absolutePath)}
           alt={alt ?? ""}
           title={title}
           loading="lazy"
@@ -171,7 +171,7 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
   );
 });
 
-function resolveDocumentImageSrc(src: string | undefined): string {
+function resolveDocumentImageSrc(src: string | undefined, documentPath: string): string {
   if (!src) {
     return "";
   }
@@ -180,7 +180,7 @@ function resolveDocumentImageSrc(src: string | undefined): string {
     return src;
   }
 
-  return `/api/document-asset?src=${encodeURIComponent(src)}`;
+  return `/api/document-asset?src=${encodeURIComponent(src)}&documentPath=${encodeURIComponent(documentPath)}`;
 }
 
 function stringifyReactNode(node: ReactNode): string {

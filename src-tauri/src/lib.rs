@@ -7,7 +7,9 @@ use std::{
 
 use serde::Deserialize;
 use tauri::{
-    AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder,
+    menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
+    AppHandle, Emitter, LogicalPosition, Manager, RunEvent, TitleBarStyle, Url, WebviewUrl,
+    WebviewWindowBuilder,
 };
 use tauri_plugin_shell::{process::CommandEvent, process::CommandChild, ShellExt};
 use uuid::Uuid;
@@ -74,7 +76,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
-        .invoke_handler(tauri::generate_handler![opened_files])
+        .menu(build_app_menu)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "margent-open-file" => {
+                let _ = app.emit("margent-menu-command", "open-file");
+            }
+            "margent-open-settings" => {
+                let _ = show_settings_window(app);
+            }
+            _ => {}
+        })
+        .invoke_handler(tauri::generate_handler![opened_files, open_settings_window])
         .setup(|app| {
             let app_handle = app.handle().clone();
             let startup_paths = std::env::args()
@@ -115,6 +127,126 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let labels = menu_labels();
+    let settings = MenuItemBuilder::with_id("margent-open-settings", labels.settings)
+        .accelerator("CmdOrCtrl+,")
+        .build(app)?;
+    let quit = PredefinedMenuItem::quit(app, Some(labels.quit))?;
+    let app_menu = Submenu::with_items(
+        app,
+        "Margent",
+        true,
+        &[
+            &settings,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+
+    let open_file = MenuItemBuilder::with_id("margent-open-file", labels.open_file)
+        .accelerator("CmdOrCtrl+O")
+        .build(app)?;
+    let file_menu = Submenu::with_items(
+        app,
+        labels.file,
+        true,
+        &[
+            &open_file,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
+    )?;
+
+    let edit_menu = Submenu::with_items(
+        app,
+        labels.edit,
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+
+    let window_menu = Submenu::with_items(
+        app,
+        labels.window,
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+            &PredefinedMenuItem::fullscreen(app, None)?,
+        ],
+    )?;
+
+    Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &window_menu])
+}
+
+struct MenuLabels {
+    settings: &'static str,
+    quit: &'static str,
+    open_file: &'static str,
+    file: &'static str,
+    edit: &'static str,
+    window: &'static str,
+}
+
+fn menu_labels() -> MenuLabels {
+    if is_system_chinese() {
+        return MenuLabels {
+            settings: "设置...",
+            quit: "退出 Margent",
+            open_file: "打开 Markdown 文件...",
+            file: "文件",
+            edit: "编辑",
+            window: "窗口",
+        };
+    }
+
+    MenuLabels {
+        settings: "Settings...",
+        quit: "Quit Margent",
+        open_file: "Open Markdown File...",
+        file: "File",
+        edit: "Edit",
+        window: "Window",
+    }
+}
+
+fn is_system_chinese() -> bool {
+    if std::env::var("LANG")
+        .map(|value| value.to_ascii_lowercase().starts_with("zh"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleLanguages"])
+            .output()
+        {
+            let languages = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+            if languages.contains("zh") {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+#[tauri::command]
+fn open_settings_window(app: AppHandle) -> Result<(), String> {
+    show_settings_window(&app).map_err(|error| error.to_string())
 }
 
 fn start_reviewer_server(app: AppHandle, startup_document: Option<String>) -> tauri::Result<()> {
@@ -242,14 +374,58 @@ fn open_main_window(app: &AppHandle, server_url: &str) -> tauri::Result<()> {
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(
+    let mut window_builder = WebviewWindowBuilder::new(
         app,
         "main",
         WebviewUrl::External(Url::parse(&url).expect("invalid reviewer server URL")),
     )
     .title("Margent")
     .inner_size(1280.0, 860.0)
-    .min_inner_size(960.0, 640.0)
+    .min_inner_size(960.0, 640.0);
+
+    #[cfg(target_os = "macos")]
+    {
+        window_builder = window_builder
+            .title_bar_style(TitleBarStyle::Overlay)
+            .traffic_light_position(LogicalPosition::new(16.0, 28.0))
+            .hidden_title(true);
+    }
+
+    window_builder.build()?;
+
+    Ok(())
+}
+
+fn show_settings_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    let state = app.state::<DesktopState>();
+    let server_url = state
+        .server_url
+        .lock()
+        .expect("server url lock poisoned")
+        .clone()
+        .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("Margent server is not ready.")))?;
+    let url = format!("{}/?settingsWindow=1&desktopToken={}", server_url, state.token);
+    let title = if is_system_chinese() {
+        "Margent 设置"
+    } else {
+        "Margent Settings"
+    };
+
+    WebviewWindowBuilder::new(
+        app,
+        "settings",
+        WebviewUrl::External(Url::parse(&url).expect("invalid settings URL")),
+    )
+    .title(title)
+    .inner_size(520.0, 300.0)
+    .min_inner_size(480.0, 280.0)
+    .resizable(false)
+    .center()
     .build()?;
 
     Ok(())
@@ -261,7 +437,7 @@ fn push_opened_files(app: &AppHandle, paths: Vec<String>) {
         .lock()
         .expect("opened files lock poisoned")
         .extend(paths.clone());
-    sync_opened_files_to_server(app, paths.clone(), true);
+    sync_opened_files_to_server(app, paths.clone(), false);
     let _ = app.emit("desktop-open-files", paths);
 }
 

@@ -5,6 +5,7 @@ import type {
   AnnotationStatus,
   CreateReviewEventRequest,
   CreateAnnotationRequest,
+  ReviewAnchor,
   ReviewAnnotation,
   ReviewAuthor,
   ReviewEvent,
@@ -81,7 +82,7 @@ export async function createAnnotation(
     status: "open",
     author: request.author ?? DEFAULT_USER_AUTHOR,
     body,
-    anchor: request.anchor,
+    anchor: prepareAnchorForCreate(request.anchor),
     replies: [],
     createdAt: now,
     updatedAt: now
@@ -461,6 +462,19 @@ function createReplyTarget(reply: ReviewReply): ReviewReply["replyTo"] {
     authorName: reply.author.name,
     authorType: reply.author.type
   };
+}
+
+function prepareAnchorForCreate(anchor: ReviewAnchor): ReviewAnchor {
+  if (anchor.selectedText && !anchor.originalSelectedText) {
+    anchor.originalSelectedText = anchor.selectedText;
+  }
+
+  if (!anchor.anchorPrecision) {
+    anchor.anchorPrecision =
+      anchor.kind === "text" ? "exact" : anchor.kind === "document" ? "heading" : "block";
+  }
+
+  return anchor;
 }
 
 function assertAnnotationStatus(status: string): asserts status is AnnotationStatus {

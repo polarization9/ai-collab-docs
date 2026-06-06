@@ -15,7 +15,7 @@ export type CodexTargetReference = {
   cwd?: string;
   configuredAt?: string;
   configuredBy?: "codex" | "user";
-  configuredVia?: "source" | "mcp-bind-instruction" | "manual";
+  configuredVia?: "source" | "mcp-bind-instruction" | "manual" | "local-log-discovery";
 };
 
 export type CodexDocumentLink = {

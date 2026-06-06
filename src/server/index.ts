@@ -12,6 +12,14 @@ import {
   loadCodexDocumentLink,
   updateCodexDocumentLink
 } from "./codexLink.js";
+import { discoverCodexSourceForDocument } from "./codexDiscovery.js";
+import {
+  listRecentDocuments,
+  loadAppSettings,
+  rememberRecentDocument,
+  removeRecentDocument,
+  saveAppSettings
+} from "./appState.js";
 import {
   dispatchReviewEvents,
   retryReviewEvent,
@@ -19,6 +27,7 @@ import {
 } from "./bridge.js";
 import { loadReviewDocument } from "./document.js";
 import { DocumentConflictError, saveReviewDocument } from "./documentEdit.js";
+import { repairReviewAnchors } from "./reviewAnchorRepair.js";
 import { assertReadableMarkdownFile, getCodexLinkPath, getReviewPath, resolveMarkdownPath } from "./paths.js";
 import { getAnnotationContext } from "./reviewContext.js";
 import {
@@ -51,6 +60,7 @@ import type {
   UpdateReviewEventRequest,
   UpdateReplyRequest
 } from "../shared/reviewTypes.js";
+import type { AppSettings } from "../shared/appSettingsTypes.js";
 import type { OpenDocumentRequest, ReviewBootstrap, ReviewSession } from "../shared/types.js";
 
 export type StartServerOptions = {
@@ -81,6 +91,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
   const app = express();
   const host = "127.0.0.1";
   let markdownPath = options.markdownPath;
+  const documentContentCache = new Map<string, string>();
 
   app.use(express.json({ limit: "1mb" }));
 
@@ -106,11 +117,50 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
     }
   });
 
+  app.get("/api/app/settings", async (_request, response) => {
+    try {
+      response.json(await loadAppSettings());
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
+  app.put("/api/app/settings", async (request, response) => {
+    try {
+      response.json(await saveAppSettings(request.body as Partial<AppSettings>));
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
+  app.get("/api/recent-documents", async (_request, response) => {
+    try {
+      response.json(await listRecentDocuments());
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
+  app.delete("/api/recent-documents", async (request, response) => {
+    try {
+      if (typeof request.query.path !== "string") {
+        throw new Error("Recent document path is required.");
+      }
+      response.json(await removeRecentDocument(request.query.path));
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
   app.post("/api/session/document", async (request, response) => {
     try {
       const nextMarkdownPath = openMarkdownPathFromRequest(request.body as OpenDocumentRequest);
       markdownPath = nextMarkdownPath;
-      response.json(await loadReviewDocument(nextMarkdownPath));
+      const document = await loadReviewDocument(nextMarkdownPath);
+      documentContentCache.set(nextMarkdownPath, document.content);
+      await rememberRecentDocument(nextMarkdownPath);
+      await discoverCodexSourceIfEnabled(nextMarkdownPath);
+      response.json(document);
     } catch (error) {
       sendApiError(response, error);
     }
@@ -121,16 +171,23 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
       const selectedPath = await pickMarkdownPath();
       const nextMarkdownPath = openMarkdownPath(selectedPath);
       markdownPath = nextMarkdownPath;
-      response.json(await loadReviewDocument(nextMarkdownPath));
+      const document = await loadReviewDocument(nextMarkdownPath);
+      documentContentCache.set(nextMarkdownPath, document.content);
+      await rememberRecentDocument(nextMarkdownPath);
+      await discoverCodexSourceIfEnabled(nextMarkdownPath);
+      response.json(document);
     } catch (error) {
       sendApiError(response, error);
     }
   });
 
-  app.get("/api/document", async (_request, response) => {
+  app.get("/api/document", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
-      const document = await loadReviewDocument(currentMarkdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      const document = await loadDocumentAndRepairExternalChanges(
+        currentMarkdownPath,
+        documentContentCache
+      );
       response.json(document);
     } catch (error) {
       sendApiError(response, error);
@@ -139,7 +196,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.get("/api/document-asset", (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       const assetPath = resolveDocumentAssetPath(currentMarkdownPath, request.query.src);
       response.sendFile(assetPath, (error) => {
         if (error && !response.headersSent) {
@@ -153,27 +210,30 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.put("/api/document", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
-      response.json(
-        await saveReviewDocument(currentMarkdownPath, request.body as SaveDocumentRequest)
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      const result = await saveReviewDocument(
+        currentMarkdownPath,
+        request.body as SaveDocumentRequest
       );
+      documentContentCache.set(currentMarkdownPath, result.document.content);
+      response.json(result);
     } catch (error) {
       sendApiError(response, error);
     }
   });
 
-  app.get("/api/review", async (_request, response) => {
+  app.get("/api/review", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await loadReviewFile(currentMarkdownPath));
     } catch (error) {
       sendApiError(response, error);
     }
   });
 
-  app.get("/api/codex-link", async (_request, response) => {
+  app.get("/api/codex-link", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await getCodexLinkResponse(currentMarkdownPath));
     } catch (error) {
       sendApiError(response, error);
@@ -182,7 +242,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.put("/api/codex-link", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       const link = await updateCodexDocumentLink(
         currentMarkdownPath,
         request.body as UpdateCodexLinkRequest
@@ -193,9 +253,9 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
     }
   });
 
-  app.post("/api/codex-link/successor-instruction", async (_request, response) => {
+  app.post("/api/codex-link/successor-instruction", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(createSuccessorInstruction(currentMarkdownPath));
     } catch (error) {
       sendApiError(response, error);
@@ -204,7 +264,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.put("/api/review", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await saveReviewFile(currentMarkdownPath, request.body as ReviewFile));
     } catch (error) {
       sendApiError(response, error);
@@ -213,7 +273,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.post("/api/review/annotations", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       let review = await createAnnotation(
         currentMarkdownPath,
         request.body as CreateAnnotationRequest
@@ -239,7 +299,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.post("/api/review/annotations/:id/replies", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(
         await addAnnotationReply(
           currentMarkdownPath,
@@ -254,7 +314,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.patch("/api/review/annotations/:id", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(
         await updateAnnotation(
           currentMarkdownPath,
@@ -269,7 +329,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.delete("/api/review/annotations/:id", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await deleteAnnotation(currentMarkdownPath, request.params.id));
     } catch (error) {
       sendApiError(response, error);
@@ -278,7 +338,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.patch("/api/review/annotations/:id/replies/:replyId", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(
         await updateAnnotationReply(
           currentMarkdownPath,
@@ -294,7 +354,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.patch("/api/review/annotations/:id/status", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(
         await updateAnnotationStatus(
           currentMarkdownPath,
@@ -309,7 +369,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.get("/api/review/annotations/:id/context", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await getAnnotationContext(currentMarkdownPath, request.params.id));
     } catch (error) {
       sendApiError(response, error);
@@ -318,7 +378,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.get("/api/review-events", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(
         await listReviewEvents(currentMarkdownPath, {
           status: parseReviewEventStatus(request.query.status),
@@ -335,7 +395,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.get("/api/review-events/:eventId", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await getReviewEvent(currentMarkdownPath, request.params.eventId));
     } catch (error) {
       sendApiError(response, error);
@@ -344,7 +404,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.post("/api/review-events", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response
         .status(201)
         .json(
@@ -357,7 +417,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.patch("/api/review-events/:eventId", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(
         await updateReviewEvent(
           currentMarkdownPath,
@@ -372,7 +432,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.post("/api/bridge/annotations/:id/send", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await sendAnnotationToCodex(currentMarkdownPath, request.params.id));
     } catch (error) {
       sendApiError(response, error);
@@ -381,16 +441,16 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
 
   app.post("/api/bridge/events/:eventId/retry", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await retryReviewEvent(currentMarkdownPath, request.params.eventId));
     } catch (error) {
       sendApiError(response, error);
     }
   });
 
-  app.post("/api/bridge/dispatch", async (_request, response) => {
+  app.post("/api/bridge/dispatch", async (request, response) => {
     try {
-      const currentMarkdownPath = getCurrentMarkdownPath(markdownPath);
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
       response.json(await dispatchReviewEvents(currentMarkdownPath));
     } catch (error) {
       sendApiError(response, error);
@@ -498,6 +558,33 @@ async function getReviewBootstrap(markdownPath: string | undefined): Promise<Rev
   };
 }
 
+async function loadDocumentAndRepairExternalChanges(
+  markdownPath: string,
+  documentContentCache: Map<string, string>
+) {
+  const document = await loadReviewDocument(markdownPath);
+  const previousContent = documentContentCache.get(markdownPath);
+
+  if (previousContent !== undefined && previousContent !== document.content) {
+    const review = await loadReviewFile(markdownPath);
+    const repaired = repairReviewAnchors(review, previousContent, document.content);
+    if (repaired.review.annotations.length > 0) {
+      await saveReviewFile(markdownPath, repaired.review);
+    }
+  }
+
+  documentContentCache.set(markdownPath, document.content);
+  return document;
+}
+
+async function discoverCodexSourceIfEnabled(markdownPath: string): Promise<void> {
+  const settings = await loadAppSettings();
+  if (!settings.codexSourceDiscoveryEnabled) {
+    return;
+  }
+  await discoverCodexSourceForDocument(markdownPath);
+}
+
 function openMarkdownPathFromRequest(body: OpenDocumentRequest): string {
   if (
     typeof body !== "object" ||
@@ -521,6 +608,22 @@ function getCurrentMarkdownPath(markdownPath: string | undefined): string {
     throw new NoDocumentOpenError();
   }
   return markdownPath;
+}
+
+function getRequestMarkdownPath(
+  request: express.Request,
+  activeMarkdownPath: string | undefined
+): string {
+  const requestedPath =
+    typeof request.query.documentPath === "string"
+      ? request.query.documentPath
+      : undefined;
+
+  if (!requestedPath) {
+    return getCurrentMarkdownPath(activeMarkdownPath);
+  }
+
+  return openMarkdownPath(requestedPath);
 }
 
 function resolveDocumentAssetPath(markdownPath: string, inputSrc: unknown): string {

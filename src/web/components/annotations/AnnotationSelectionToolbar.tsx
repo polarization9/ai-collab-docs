@@ -1,6 +1,7 @@
 import { MessageSquare, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AnnotationDraft } from "../../review/anchorCapture";
+import { useI18n } from "../../i18n";
 
 type AnnotationSelectionToolbarProps = {
   draft: AnnotationDraft | null;
@@ -13,6 +14,7 @@ export function AnnotationSelectionToolbar({
   onCreate,
   onCancel
 }: AnnotationSelectionToolbarProps) {
+  const { t } = useI18n();
   const [body, setBody] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isComposerOpen, setIsComposerOpen] = useState(false);
@@ -62,7 +64,7 @@ export function AnnotationSelectionToolbar({
       <button
         type="button"
         className="annotation-draft-button"
-        aria-label="添加批注"
+        aria-label={t("annotation.add")}
         style={{ top: iconTop, left: iconLeft }}
         onMouseDown={(event) => event.stopPropagation()}
         onMouseUp={(event) => event.stopPropagation()}
@@ -87,24 +89,24 @@ export function AnnotationSelectionToolbar({
       <div className="annotation-composer-header">
         <span>
           <MessageSquare size={14} />
-          添加批注
+          {t("annotation.add")}
         </span>
-        <button type="button" aria-label="取消批注" onClick={onCancel}>
+        <button type="button" aria-label={t("annotation.cancel")} onClick={onCancel}>
           <X size={14} />
         </button>
       </div>
       <textarea
         value={body}
-        placeholder="写下问题或修改建议"
+        placeholder={t("annotation.placeholder")}
         onChange={(event) => setBody(event.target.value)}
         autoFocus
       />
       <div className="annotation-composer-actions">
         <button type="button" onClick={onCancel}>
-          取消
+          {t("annotation.cancel")}
         </button>
         <button type="button" disabled={!body.trim() || isSaving} onClick={submit}>
-          {isSaving ? "保存中" : "保存"}
+          {isSaving ? t("annotation.saving") : t("annotation.save")}
         </button>
       </div>
     </div>

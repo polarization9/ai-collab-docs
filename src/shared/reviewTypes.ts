@@ -23,6 +23,28 @@ export type ReviewReplyTarget = {
   authorType: ReviewAuthor["type"];
 };
 
+export type AnchorPrecision = "exact" | "text" | "block" | "heading" | "unknown";
+
+export type BlockFingerprint = {
+  kind: string;
+  textHash: string;
+  normalizedText: string;
+  headingId: string | null;
+  headingText: string | null;
+  previousTextHash?: string;
+  nextTextHash?: string;
+};
+
+export type AnchorRepairMeta = {
+  originalSelectedText?: string;
+  markdownOffset?: number;
+  blockFingerprint?: BlockFingerprint;
+  anchorPrecision?: AnchorPrecision;
+  repairConfidence?: number;
+  repairReason?: string;
+  lastRepairedAt?: string;
+};
+
 export type TextReviewAnchor = {
   kind: "text";
   headingId: string | null;
@@ -34,7 +56,7 @@ export type TextReviewAnchor = {
   selectedText: string;
   prefix: string;
   suffix: string;
-};
+} & AnchorRepairMeta;
 
 export type BlockReviewAnchor = {
   kind: "block";
@@ -43,7 +65,7 @@ export type BlockReviewAnchor = {
   blockId: string;
   blockIndex: number;
   selectedText: string;
-};
+} & AnchorRepairMeta;
 
 export type MermaidReviewAnchor = {
   kind: "mermaid";
@@ -51,14 +73,14 @@ export type MermaidReviewAnchor = {
   headingText: string | null;
   mermaidIndex: number;
   selectedText: string;
-};
+} & AnchorRepairMeta;
 
 export type DocumentReviewAnchor = {
   kind: "document";
   headingId: null;
   headingText: null;
   selectedText: "";
-};
+} & AnchorRepairMeta;
 
 export type ReviewAnchor =
   | TextReviewAnchor

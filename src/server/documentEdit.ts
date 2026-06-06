@@ -34,7 +34,7 @@ export async function saveReviewDocument(
     loadReviewDocument(markdownPath),
     loadReviewFile(markdownPath)
   ]);
-  const repaired = repairReviewAnchors(review, request.content, options);
+  const repaired = repairReviewAnchors(review, currentContent, request.content, options);
   const savedReview =
     repaired.review.annotations.length > 0
       ? await saveReviewFile(markdownPath, repaired.review)

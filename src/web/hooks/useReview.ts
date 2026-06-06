@@ -22,7 +22,11 @@ type ReviewLoadState =
   | { status: "error"; message: string }
   | { status: "ready"; review: ReviewFile };
 
-export function useReview(documentId: string, initialReview: ReviewFile | null = null) {
+export function useReview(
+  documentId: string,
+  initialReview: ReviewFile | null = null,
+  documentPath?: string
+) {
   const [state, setState] = useState<ReviewLoadState>(
     initialReview?.documentId === documentId
       ? { status: "ready", review: initialReview }
@@ -36,7 +40,7 @@ export function useReview(documentId: string, initialReview: ReviewFile | null =
     }
 
     try {
-      const review = await fetchReview();
+      const review = await fetchReview(documentPath);
       setState((current) => {
         if (
           current.status === "ready" &&
@@ -56,7 +60,7 @@ export function useReview(documentId: string, initialReview: ReviewFile | null =
       }
       return null;
     }
-  }, []);
+  }, [documentPath]);
 
   useEffect(() => {
     if (initialReview?.documentId === documentId) {
@@ -66,47 +70,47 @@ export function useReview(documentId: string, initialReview: ReviewFile | null =
   }, [documentId, initialReview, reload]);
 
   const create = useCallback(async (request: CreateAnnotationRequest) => {
-    const review = await createAnnotation(request);
+    const review = await createAnnotation(request, documentPath);
     setState({ status: "ready", review });
     const created = review.annotations[review.annotations.length - 1];
     setSelectedAnnotationId(created?.id ?? null);
-  }, []);
+  }, [documentPath]);
 
   const reply = useCallback(async (annotationId: string, request: AddReplyRequest) => {
-    const review = await addAnnotationReply(annotationId, request);
+    const review = await addAnnotationReply(annotationId, request, documentPath);
     setState({ status: "ready", review });
     setSelectedAnnotationId(annotationId);
-  }, []);
+  }, [documentPath]);
 
   const editAnnotation = useCallback(
     async (annotationId: string, request: UpdateAnnotationRequest) => {
-      const review = await updateAnnotation(annotationId, request);
+      const review = await updateAnnotation(annotationId, request, documentPath);
       setState({ status: "ready", review });
       setSelectedAnnotationId(annotationId);
     },
-    []
+    [documentPath]
   );
 
   const removeAnnotation = useCallback(async (annotationId: string) => {
-    const review = await deleteAnnotation(annotationId);
+    const review = await deleteAnnotation(annotationId, documentPath);
     setState({ status: "ready", review });
     setSelectedAnnotationId((current) => (current === annotationId ? null : current));
-  }, []);
+  }, [documentPath]);
 
   const editReply = useCallback(
     async (annotationId: string, replyId: string, request: UpdateReplyRequest) => {
-      const review = await updateAnnotationReply(annotationId, replyId, request);
+      const review = await updateAnnotationReply(annotationId, replyId, request, documentPath);
       setState({ status: "ready", review });
       setSelectedAnnotationId(annotationId);
     },
-    []
+    [documentPath]
   );
 
   const setStatus = useCallback(async (annotationId: string, status: AnnotationStatus) => {
-    const review = await updateAnnotationStatus(annotationId, { status });
+    const review = await updateAnnotationStatus(annotationId, { status }, documentPath);
     setState({ status: "ready", review });
     setSelectedAnnotationId(annotationId);
-  }, []);
+  }, [documentPath]);
 
   const replaceReview = useCallback((review: ReviewFile) => {
     setState({ status: "ready", review });

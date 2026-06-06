@@ -26,6 +26,7 @@ import type {
   UpdateAnnotationRequest,
   UpdateReplyRequest
 } from "../../../shared/reviewTypes";
+import { useI18n, type LocaleKey } from "../../i18n";
 
 type AnnotationFilter = "all" | AnnotationStatus;
 
@@ -79,6 +80,7 @@ export function AnnotationSidebar({
   onRetryReviewEvent,
   onReload
 }: AnnotationSidebarProps) {
+  const { t } = useI18n();
   const [filter, setFilter] = useState<AnnotationFilter>("all");
   const [isDocumentComposerOpen, setIsDocumentComposerOpen] = useState(false);
   const [documentAnnotationDraft, setDocumentAnnotationDraft] = useState("");
@@ -105,24 +107,24 @@ export function AnnotationSidebar({
       setIsDocumentComposerOpen(false);
       setFilter("all");
     } catch (error) {
-      setDocumentAnnotationError(error instanceof Error ? error.message : "添加全文批注失败");
+      setDocumentAnnotationError(error instanceof Error ? error.message : t("annotation.createDocumentFailed"));
     } finally {
       setIsCreatingDocumentAnnotation(false);
     }
   };
 
   return (
-    <aside className="annotation-sidebar" aria-label="批注">
+    <aside className="annotation-sidebar" aria-label={t("annotation.title")}>
       <div className="annotation-sidebar-header">
         <div>
           <span className="annotation-sidebar-kicker">Review</span>
-          <h2>批注</h2>
+          <h2>{t("annotation.title")}</h2>
         </div>
         <div className="annotation-sidebar-header-actions">
           <button
             type="button"
-            aria-label="新建全文批注"
-            title="新建全文批注"
+            aria-label={t("annotation.newDocument")}
+            title={t("annotation.newDocument")}
             onClick={() => {
               setDocumentAnnotationError(null);
               setIsDocumentComposerOpen((current) => !current);
@@ -130,7 +132,7 @@ export function AnnotationSidebar({
           >
             <MessageSquarePlus size={15} />
           </button>
-          <button type="button" aria-label="刷新批注" title="刷新批注" onClick={onReload}>
+          <button type="button" aria-label={t("annotation.refresh")} title={t("annotation.refresh")} onClick={onReload}>
             <RotateCcw size={15} />
           </button>
         </div>
@@ -147,8 +149,8 @@ export function AnnotationSidebar({
         <form className="annotation-document-composer" onSubmit={submitDocumentAnnotation}>
           <textarea
             value={documentAnnotationDraft}
-            placeholder="写下全文批注，不引用具体段落"
-            aria-label="全文批注内容"
+            placeholder={t("annotation.documentPlaceholder")}
+            aria-label={t("annotation.documentBody")}
             autoFocus
             onChange={(event) => setDocumentAnnotationDraft(event.target.value)}
           />
@@ -157,7 +159,7 @@ export function AnnotationSidebar({
           ) : null}
           <InlineFormActions
             isSaving={isCreatingDocumentAnnotation}
-            primaryLabel="保存"
+            primaryLabel={t("annotation.save")}
             onCancel={() => {
               setDocumentAnnotationDraft("");
               setDocumentAnnotationError(null);
@@ -167,27 +169,27 @@ export function AnnotationSidebar({
         </form>
       ) : null}
 
-      <div className="annotation-filter" role="tablist" aria-label="批注筛选">
-        <FilterButton active={filter === "all"} label="全部" onClick={() => setFilter("all")} />
+      <div className="annotation-filter" role="tablist" aria-label={t("annotation.filter")}>
+        <FilterButton active={filter === "all"} label={t("annotation.all")} onClick={() => setFilter("all")} />
         <FilterButton
           active={filter === "resolved"}
-          label="已解决"
+          label={t("annotation.resolved")}
           onClick={() => setFilter("resolved")}
         />
         <FilterButton
           active={filter === "open"}
-          label="未解决"
+          label={t("annotation.open")}
           onClick={() => setFilter("open")}
         />
       </div>
 
       {error ? <div className="annotation-error">{error}</div> : null}
-      {isLoading ? <div className="annotation-empty">Loading annotations...</div> : null}
+      {isLoading ? <div className="annotation-empty">{t("annotation.loading")}</div> : null}
 
       {!isLoading && filteredAnnotations.length === 0 ? (
         <div className="annotation-empty">
           <MessageSquare size={17} />
-          <span>{filter === "all" ? "还没有批注" : "还没有这个状态的批注"}</span>
+          <span>{filter === "all" ? t("annotation.emptyAll") : t("annotation.emptyFilter")}</span>
         </div>
       ) : null}
 
@@ -224,11 +226,12 @@ function AnnotationCodexStatus({
   onToggleAutoMonitor: (enabled: boolean) => Promise<void>;
   onCopySuccessorInstruction: () => Promise<void>;
 }) {
+  const { t } = useI18n();
   const [isBusy, setIsBusy] = useState(false);
   const connection = codexLink?.connection;
   const autoEnabled = Boolean(connection?.autoSendNewAnnotations);
-  const view = getCodexRouteView(codexLink, error);
-  const copyInstructionLabel = connection?.hasTarget ? "复制接续指令" : "复制连接指令";
+  const view = getCodexRouteView(codexLink, t, error);
+  const copyInstructionLabel = connection?.hasTarget ? t("codex.copySuccessor") : t("codex.copyConnect");
 
   const run = async (action: () => Promise<void>) => {
     if (isBusy) {
@@ -245,7 +248,7 @@ function AnnotationCodexStatus({
   return (
     <section
       className={`annotation-codex-route annotation-codex-route-${view.tone}`}
-      aria-label="Codex 连接状态"
+      aria-label={t("codex.status")}
     >
       <div className="annotation-codex-route-main">
         <span className="annotation-codex-route-dot" aria-hidden="true" />
@@ -262,15 +265,15 @@ function AnnotationCodexStatus({
             className={`annotation-codex-monitor${autoEnabled ? " annotation-codex-monitor-on" : ""}`}
             role="switch"
             aria-checked={autoEnabled}
-            aria-label={autoEnabled ? "关闭自动监控" : "开启自动监控"}
-            title={autoEnabled ? "关闭自动监控" : "开启自动监控"}
+            aria-label={autoEnabled ? t("codex.disableAuto") : t("codex.enableAuto")}
+            title={autoEnabled ? t("codex.disableAuto") : t("codex.enableAuto")}
             disabled={isBusy}
             onClick={() => run(() => onToggleAutoMonitor(!autoEnabled))}
           >
             <span className="annotation-codex-switch" aria-hidden="true">
               <span />
             </span>
-            <span>自动</span>
+            <span>{t("codex.autoShort")}</span>
           </button>
         ) : null}
         <button
@@ -289,11 +292,15 @@ function AnnotationCodexStatus({
   );
 }
 
-function getCodexRouteView(codexLink: CodexLinkResponse | null, error?: string | null) {
+function getCodexRouteView(
+  codexLink: CodexLinkResponse | null,
+  t: (key: LocaleKey, params?: Record<string, string | number>) => string,
+  error?: string | null
+) {
   if (error) {
     return {
       tone: "error",
-      label: "状态读取失败",
+      label: t("codex.readFailed"),
       detail: error,
       threadTitle: error
     };
@@ -302,9 +309,9 @@ function getCodexRouteView(codexLink: CodexLinkResponse | null, error?: string |
   if (!codexLink) {
     return {
       tone: "checking",
-      label: "检查会话关联",
-      detail: "正在读取本地连接",
-      threadTitle: "正在读取本地连接"
+      label: t("codex.checking"),
+      detail: t("codex.readingLocal"),
+      threadTitle: t("codex.readingLocal")
     };
   }
 
@@ -317,14 +324,14 @@ function getCodexRouteView(codexLink: CodexLinkResponse | null, error?: string |
   if (!connection.hasTarget) {
     return {
       tone: "unlinked",
-      label: "未关联会话",
-      detail: "批注仅保存在本地",
-      threadTitle: "批注仅保存在本地"
+      label: t("codex.unlinked"),
+      detail: t("codex.localOnly"),
+      threadTitle: t("codex.localOnly")
     };
   }
 
-  const label = connection.targetType === "successor" ? "接续会话" : "来源会话";
-  const mode = connection.autoSendNewAnnotations ? "自动监控中" : "手动投递";
+  const label = connection.targetType === "successor" ? t("codex.successor") : t("codex.source");
+  const mode = connection.autoSendNewAnnotations ? t("codex.autoMode") : t("codex.manualMode");
 
   return {
     tone: connection.autoSendNewAnnotations ? "auto" : connection.targetType ?? "source",
@@ -376,37 +383,40 @@ type AnnotationEventBadge = {
   tone: Exclude<ReviewEventDeliveryStatus, "ignored">;
 };
 
-function getAnnotationEventBadge(event: ReviewEvent | null): AnnotationEventBadge | null {
+function getAnnotationEventBadge(
+  event: ReviewEvent | null,
+  t: (key: LocaleKey, params?: Record<string, string | number>) => string
+): AnnotationEventBadge | null {
   switch (event?.deliveryStatus) {
     case "queued":
       return {
-        label: "待投递",
-        title: "已进入 Codex 队列，等待投递",
+        label: t("event.queued"),
+        title: t("event.queuedTitle"),
         tone: "queued"
       };
     case "delivering":
       return {
-        label: "等待会话",
-        title: "正在等待 Codex 会话可接收任务",
+        label: t("event.delivering"),
+        title: t("event.deliveringTitle"),
         tone: "delivering"
       };
     case "sent":
     case "processing":
       return {
-        label: "Codex 处理中",
-        title: "Codex 已收到任务，正在等待处理完成",
+        label: t("event.processing"),
+        title: t("event.processingTitle"),
         tone: "processing"
       };
     case "handled":
       return {
-        label: "已处理",
-        title: "Codex 已完成这条批注的处理",
+        label: t("event.handled"),
+        title: t("event.handledTitle"),
         tone: "handled"
       };
     case "failed":
       return {
-        label: "未投递",
-        title: "投递失败，可以重试",
+        label: t("event.failed"),
+        title: t("event.failedTitle"),
         tone: "failed"
       };
     case "ignored":
@@ -433,6 +443,7 @@ function AnnotationCard({
   onSendToCodex,
   onRetryReviewEvent
 }: AnnotationCardProps) {
+  const { t } = useI18n();
   const [isReplying, setIsReplying] = useState(false);
   const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
   const [editingReplyId, setEditingReplyId] = useState<string | null>(null);
@@ -455,7 +466,7 @@ function AnnotationCard({
   const shouldExpand =
     isSelected && (isReplying || annotation.replies.length > 0 || localError);
   const hasFailedEvent = event?.deliveryStatus === "failed";
-  const eventBadge = getAnnotationEventBadge(event);
+  const eventBadge = getAnnotationEventBadge(event, t);
 
   useEffect(() => {
     setAnnotationDraft(annotation.body);
@@ -498,7 +509,7 @@ function AnnotationCard({
     try {
       await action();
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : "操作失败");
+      setLocalError(error instanceof Error ? error.message : t("annotation.operationFailed"));
     } finally {
       setIsSaving(false);
     }
@@ -606,7 +617,7 @@ function AnnotationCard({
           <span className="annotation-card-status-row">
             <span className={`annotation-status annotation-status-${annotation.status}`}>
               {annotation.status === "open" ? <CircleDot size={13} /> : <CheckCircle2 size={13} />}
-              {annotation.status === "open" ? "未解决" : "已解决"}
+              {annotation.status === "open" ? t("annotation.open") : t("annotation.resolved")}
             </span>
             {eventBadge ? (
               <span
@@ -621,15 +632,15 @@ function AnnotationCard({
             className="annotation-card-body-editor"
             value={annotationDraft}
             onChange={(event) => setAnnotationDraft(event.target.value)}
-            aria-label="编辑批注"
+            aria-label={t("annotation.edit")}
             autoFocus
           />
           <span className="annotation-card-meta">
-            {annotation.replies.length} 条回复 · {formatTime(annotation.updatedAt)}
+            {t("annotation.replies", { count: annotation.replies.length })} · {formatTime(annotation.updatedAt)}
           </span>
           <InlineFormActions
             isSaving={isSaving}
-            primaryLabel="保存"
+            primaryLabel={t("annotation.save")}
             onCancel={() => {
               setAnnotationDraft(annotation.body);
               setIsEditingAnnotation(false);
@@ -645,7 +656,7 @@ function AnnotationCard({
           <span className="annotation-card-status-row">
             <span className={`annotation-status annotation-status-${annotation.status}`}>
               {annotation.status === "open" ? <CircleDot size={13} /> : <CheckCircle2 size={13} />}
-              {annotation.status === "open" ? "未解决" : "已解决"}
+              {annotation.status === "open" ? t("annotation.open") : t("annotation.resolved")}
             </span>
             {eventBadge ? (
               <span
@@ -658,7 +669,7 @@ function AnnotationCard({
           </span>
           <span className="annotation-card-body">{annotation.body}</span>
           <span className="annotation-card-meta">
-            {annotation.replies.length} 条回复 · {formatTime(annotation.updatedAt)}
+            {t("annotation.replies", { count: annotation.replies.length })} · {formatTime(annotation.updatedAt)}
           </span>
         </button>
       )}
@@ -668,8 +679,8 @@ function AnnotationCard({
           <button
             type="button"
             className="annotation-card-icon-action"
-            aria-label="重试投递"
-            title="重试投递"
+            aria-label={t("annotation.retryDelivery")}
+            title={t("annotation.retryDelivery")}
             onClick={retryEvent}
             disabled={isSaving}
           >
@@ -679,8 +690,8 @@ function AnnotationCard({
         <button
           type="button"
           className="annotation-card-icon-action"
-          aria-label={annotation.status === "open" ? "标记已解决" : "重新打开"}
-          title={annotation.status === "open" ? "标记已解决" : "重新打开"}
+          aria-label={annotation.status === "open" ? t("annotation.markResolved") : t("annotation.reopen")}
+          title={annotation.status === "open" ? t("annotation.markResolved") : t("annotation.reopen")}
           onClick={() =>
             onStatusChange(annotation.id, annotation.status === "open" ? "resolved" : "open")
           }
@@ -696,11 +707,11 @@ function AnnotationCard({
             }`}
             onClick={removeAnnotation}
             disabled={isSaving}
-            aria-label={isDeleteArmed ? "确认删除批注" : "删除批注"}
-            title={isDeleteArmed ? "再次点击确认删除" : "删除批注"}
+            aria-label={isDeleteArmed ? t("annotation.confirmDelete") : t("annotation.delete")}
+            title={isDeleteArmed ? t("annotation.deleteAgain") : t("annotation.delete")}
           >
             <Trash2 size={13} />
-            {isDeleteArmed ? <span>确认删除</span> : null}
+            {isDeleteArmed ? <span>{t("annotation.confirmDeleteText")}</span> : null}
           </button>
         ) : null}
       </div>
@@ -709,11 +720,11 @@ function AnnotationCard({
         <div className="annotation-card-actions">
           <button type="button" onClick={openReply}>
             <Reply size={13} />
-            回复
+            {t("annotation.reply")}
           </button>
           <button type="button" onClick={openAnnotationEdit}>
             <Pencil size={13} />
-            编辑
+            {t("annotation.edit")}
           </button>
           <button type="button" onClick={sendToCodex} disabled={isSaving}>
             <AtSign size={13} />
@@ -738,8 +749,8 @@ function AnnotationCard({
                       {reply.author.type === "agent" ? (
                         <button
                           type="button"
-                          aria-label={`回复 ${reply.author.name}`}
-                          title={`回复 ${reply.author.name}`}
+                          aria-label={t("annotation.replyToName", { name: reply.author.name })}
+                          title={t("annotation.replyToName", { name: reply.author.name })}
                           onClick={() => openReplyToReply(reply)}
                         >
                           <Reply size={12} />
@@ -747,8 +758,8 @@ function AnnotationCard({
                       ) : canEditReply ? (
                         <button
                           type="button"
-                          aria-label="编辑回复"
-                          title="编辑回复"
+                          aria-label={t("annotation.editReply")}
+                          title={t("annotation.editReply")}
                           onClick={() => {
                             onSelect(annotation.id);
                             setEditingReplyId(reply.id);
@@ -773,11 +784,11 @@ function AnnotationCard({
                               [reply.id]: event.target.value
                             }))
                           }
-                          aria-label="编辑回复内容"
+                          aria-label={t("annotation.editReplyBody")}
                         />
                         <InlineFormActions
                           isSaving={isSaving}
-                          primaryLabel="保存"
+                          primaryLabel={t("annotation.save")}
                           onCancel={() => {
                             setReplyDrafts((current) => ({
                               ...current,
@@ -807,18 +818,18 @@ function AnnotationCard({
             <form className="annotation-inline-form" onSubmit={submitReply}>
               {replyTarget ? (
                 <div className="annotation-reply-target">
-                  回复 <span>@{replyTarget.authorName}</span>
+                  {t("annotation.reply")} <span>@{replyTarget.authorName}</span>
                 </div>
               ) : null}
               <textarea
                 value={replyDraft}
                 onChange={(event) => setReplyDraft(event.target.value)}
-                placeholder={replyTarget ? "继续回应这条回复" : "回复这条批注"}
-                aria-label="回复批注"
+                placeholder={replyTarget ? t("annotation.replyToReply") : t("annotation.replyToAnnotation")}
+                aria-label={t("annotation.replyToAnnotation")}
               />
               <InlineFormActions
                 isSaving={isSaving}
-                primaryLabel="发送"
+                primaryLabel={t("annotation.send")}
                 primaryIcon={<Send size={13} />}
                 onCancel={() => {
                   setReplyDraft("");
@@ -845,15 +856,16 @@ function InlineFormActions({
   primaryIcon?: ReactNode;
   onCancel: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="annotation-inline-actions">
       <button type="button" onClick={onCancel} disabled={isSaving}>
         <X size={13} />
-        取消
+        {t("annotation.cancel")}
       </button>
       <button type="submit" disabled={isSaving}>
         {primaryIcon ?? <Check size={13} />}
-        {isSaving ? "处理中" : primaryLabel}
+        {isSaving ? t("annotation.processing") : primaryLabel}
       </button>
     </div>
   );

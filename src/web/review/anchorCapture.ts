@@ -59,7 +59,9 @@ export function captureAnnotationDraft(
         headingText: heading?.text ?? null,
         blockId: blockMeta.blockId,
         blockIndex: blockMeta.blockIndex,
-        selectedText
+        selectedText,
+        originalSelectedText: selectedText,
+        anchorPrecision: "block"
       }
     };
   }
@@ -84,7 +86,9 @@ export function captureAnnotationDraft(
       endOffset: normalizedEnd,
       selectedText,
       prefix: blockText.slice(Math.max(0, normalizedStart - CONTEXT_CHARS), normalizedStart),
-      suffix: blockText.slice(normalizedEnd, normalizedEnd + CONTEXT_CHARS)
+      suffix: blockText.slice(normalizedEnd, normalizedEnd + CONTEXT_CHARS),
+      originalSelectedText: selectedText,
+      anchorPrecision: "exact"
     }
   };
 }

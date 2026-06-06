@@ -1,7 +1,14 @@
+import type { AppSettings } from "../shared/appSettingsTypes";
+
 type OpenFilesListener = (paths: string[]) => void;
+type AppMenuCommand = "open-file" | "open-settings";
+type AppMenuCommandListener = (command: AppMenuCommand) => void;
 type DialogModule = typeof import("@tauri-apps/plugin-dialog");
+type SettingsChangedListener = (settings: AppSettings) => void;
 
 let dialogModulePromise: Promise<DialogModule> | null = null;
+
+const SETTINGS_CHANGED_EVENT = "margent-settings-updated";
 
 export function isTauriRuntime(): boolean {
   return (
@@ -30,7 +37,7 @@ export async function pickMarkdownFile(): Promise<string | null> {
 
   const { open } = await loadDialogModule();
   const selected = await open({
-    title: "选择 Markdown 文件",
+    title: getMarkdownFilePickerTitle(),
     multiple: false,
     directory: false,
     filters: [
@@ -42,6 +49,14 @@ export async function pickMarkdownFile(): Promise<string | null> {
   });
 
   return typeof selected === "string" ? selected : null;
+}
+
+function getMarkdownFilePickerTitle(): string {
+  const browserLanguage =
+    typeof navigator === "undefined" ? "zh-CN" : navigator.language;
+  return browserLanguage.toLowerCase().startsWith("zh")
+    ? "选择 Markdown 文件"
+    : "Choose Markdown File";
 }
 
 export async function getInitialOpenedFiles(): Promise<string[]> {
@@ -72,5 +87,109 @@ export async function listenForOpenedFiles(listener: OpenFilesListener): Promise
   } catch (error) {
     console.warn("Unable to listen for opened files from Tauri.", error);
     return () => undefined;
+  }
+}
+
+export async function listenForAppMenuCommand(
+  listener: AppMenuCommandListener
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    return () => undefined;
+  }
+
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<AppMenuCommand>("margent-menu-command", (event) => {
+      listener(event.payload);
+    });
+    return unlisten;
+  } catch (error) {
+    console.warn("Unable to listen for Margent menu commands.", error);
+    return () => undefined;
+  }
+}
+
+export async function openSettingsWindow(): Promise<void> {
+  if (isTauriRuntime()) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_settings_window");
+    } catch (error) {
+      console.warn("Unable to open Margent settings window.", error);
+    }
+    return;
+  }
+
+  window.open(
+    `${window.location.origin}${window.location.pathname}?settingsWindow=1`,
+    "margent-settings",
+    "width=520,height=320"
+  );
+}
+
+export async function notifySettingsChanged(settings: AppSettings): Promise<void> {
+  if (isTauriRuntime()) {
+    try {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit(SETTINGS_CHANGED_EVENT, settings);
+    } catch (error) {
+      console.warn("Unable to notify Margent settings change.", error);
+    }
+    return;
+  }
+
+  window.localStorage.setItem(
+    SETTINGS_CHANGED_EVENT,
+    JSON.stringify({
+      settings,
+      updatedAt: Date.now()
+    })
+  );
+}
+
+export async function listenForSettingsChanged(
+  listener: SettingsChangedListener
+): Promise<() => void> {
+  if (isTauriRuntime()) {
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      return await listen<AppSettings>(SETTINGS_CHANGED_EVENT, (event) => {
+        listener(event.payload);
+      });
+    } catch (error) {
+      console.warn("Unable to listen for Margent settings changes.", error);
+      return () => undefined;
+    }
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key !== SETTINGS_CHANGED_EVENT || !event.newValue) {
+      return;
+    }
+
+    try {
+      const payload = JSON.parse(event.newValue) as { settings?: AppSettings };
+      if (payload.settings) {
+        listener(payload.settings);
+      }
+    } catch {
+      // Ignore malformed cross-window settings notifications.
+    }
+  };
+
+  window.addEventListener("storage", handleStorage);
+  return () => window.removeEventListener("storage", handleStorage);
+}
+
+export async function startWindowDrag(): Promise<void> {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().startDragging();
+  } catch (error) {
+    console.warn("Unable to start Margent window drag.", error);
   }
 }
