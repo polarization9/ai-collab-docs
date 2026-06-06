@@ -58,7 +58,7 @@ export async function loadReviewFile(markdownPath: string): Promise<ReviewFile> 
 export async function saveReviewFile(markdownPath: string, review: ReviewFile): Promise<ReviewFile> {
   const normalized = normalizeReviewFile(review, markdownPath);
   const reviewPath = getReviewPath(markdownPath);
-  const temporaryPath = `${reviewPath}.tmp`;
+  const temporaryPath = `${reviewPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
   const serialized = `${JSON.stringify(normalized, null, 2)}\n`;
 
   await fs.writeFile(temporaryPath, serialized, "utf8");

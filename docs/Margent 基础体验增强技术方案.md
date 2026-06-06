@@ -431,8 +431,9 @@ GET /api/codex-link?documentPath=
 新增 `DocumentTabs`：
 
 - 顶部轻量文档条。
-- 展示文件名、未保存状态、外部更新状态。
+- 展示文件名和关闭入口。
 - 支持打开、切换、关闭。
+- 未保存状态、外部更新状态先保留在文档状态区或后续迭代，不作为 P0 tab 强展示。
 
 `App.tsx` 从单文档状态升级为 workspace 状态：
 

@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "identifier": "com.margent.desktop",
   "build": {
-    "beforeDevCommand": "npm run build:web",
+    "beforeDevCommand": "npm run build:web && npm run dev:web",
     "beforeBuildCommand": "npm run build",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../dist/web"

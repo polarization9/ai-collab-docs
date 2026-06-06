@@ -496,11 +496,6 @@ function createDesktopTokenMiddleware(
       return;
     }
 
-    if (request.hostname === "127.0.0.1" || request.hostname === "localhost") {
-      next();
-      return;
-    }
-
     if (request.header("x-margent-token") === desktopToken) {
       next();
       return;
@@ -637,9 +632,14 @@ function resolveDocumentAssetPath(markdownPath: string, inputSrc: unknown): stri
   }
 
   const [srcWithoutHash] = src.split("#");
-  const [assetReference] = srcWithoutHash.split("?");
+  const [encodedAssetReference] = srcWithoutHash.split("?");
+  const assetReference = decodeAssetReference(encodedAssetReference);
   if (!assetReference) {
     throw new Error("Image source is required.");
+  }
+
+  if (/^[a-z][a-z\d+.-]*:/i.test(assetReference) || assetReference.startsWith("//")) {
+    throw new Error("Remote image sources are not served by Margent.");
   }
 
   const markdownDir = path.dirname(markdownPath);
@@ -662,6 +662,14 @@ function resolveDocumentAssetPath(markdownPath: string, inputSrc: unknown): stri
   }
 
   return assetPath;
+}
+
+function decodeAssetReference(assetReference: string): string {
+  try {
+    return decodeURIComponent(assetReference);
+  } catch {
+    throw new Error("Image source is not a valid encoded path.");
+  }
 }
 
 function pickMarkdownPath(): Promise<string> {

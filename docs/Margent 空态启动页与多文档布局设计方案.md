@@ -13,16 +13,17 @@
 
 ### 2.1 页面结构
 
-空态使用两栏工作台布局：
+空态使用纵向单栏布局：
 
 ```text
 Margent app canvas
-├── 最近文档 rail
-└── 打开文档 workspace
+├── 打开文档 command
+└── 最近文档 list
 ```
 
-- 左侧最近文档 rail 宽度约 320-360px。
-- 右侧 workspace 占据剩余空间，承载主操作。
+- 打开文档 command 位于页面中部偏上，是唯一主操作。
+- 最近文档 list 位于主操作下方，作为辅助入口，不使用额外容器包裹。
+- 打开区域和最近文档列表保持同一视觉中线。
 - 不再出现内嵌 macOS 窗口边框、三色圆点或大面积装饰。
 - 设置入口保持全局属性，不和打开文件主任务竞争。
 
@@ -30,8 +31,9 @@ Margent app canvas
 
 视觉：
 
-- 左侧 rail 标题为“最近打开”，下方是一行轻量空状态。
-- 右侧 workspace 居中放置文件图标、标题、短说明和主按钮。
+- 页面中部放置一行打开命令，包含文件图标、标题和主按钮。
+- 最近打开标题固定显示在主操作下方。
+- 无最近文档时，只保留轻量空状态，不额外占用大块容器。
 - 主标题控制在产品界面字号，不使用 hero 级大字。
 
 文案建议：
@@ -45,15 +47,14 @@ Margent app canvas
 最近文档行展示：
 
 - 文件名。
-- 父级目录或压缩路径。
 - 最近打开时间。
 - 移除按钮，hover 后显示或增强。
 
 交互：
 
-- 点击行打开文件。
+- 整行都是点击热区，点击行打开文件。
 - 文件名溢出使用单行省略。
-- path 作为 tooltip 或第二行弱文本，不把行撑高。
+- path 作为 tooltip，不在默认列表中显示，避免把行撑高。
 
 ### 2.4 最近文档缺失
 
@@ -68,8 +69,8 @@ Margent app canvas
 
 用于 App 刚启动、sidecar 正在准备、恢复上次文档时：
 
-- 主 workspace 展示轻量 skeleton 或“正在恢复文档”状态。
-- 最近文档 rail 可以先展示 skeleton 行。
+- 主打开命令区域展示轻量 skeleton 或“正在恢复文档”状态。
+- 最近文档列表可以先展示 skeleton 行。
 - 不应先闪出 “Unable to load document”。
 - 只有明确失败后才进入打开失败状态。
 
@@ -86,8 +87,7 @@ Margent app canvas
 
 小于约 860px：
 
-- 两栏改为上下结构。
-- 主 workspace 在上，最近文档在下。
+- 主打开命令在上，最近文档在下。
 - 最近文档行保持紧凑，避免横向滚动。
 
 ## 3. 多文件布局
@@ -186,7 +186,7 @@ Close 按钮：
 建议按以下顺序实现：
 
 1. 先调整 DOM 层级：确保 `DocumentTabs` 是 `app-root` 下的全局兄弟节点，而不是 document pane 的子节点。
-2. 重写空态 DOM：去掉 faux window 结构，保留 recent rail 和 open workspace。
+2. 重写空态 DOM：去掉 faux window 结构，保留打开命令和最近打开列表。
 3. 重写 tab CSS：active / inactive / close / pinned open button / overflow。
 4. 增加空态子状态样式：no recent、missing file、loading/restoring、open failed。
 5. 做浏览器截图检查：空态无 recent、有 recent、多 tab、窄屏、多 tab 横向溢出。
