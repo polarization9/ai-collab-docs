@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { parseHeadings } from "../../src/shared/markdownHeadings.js";
+import { parseMarkdownBlocks } from "../../src/server/markdownBlocks.js";
 import {
   addAnnotationReply,
   createAnnotation,
@@ -74,6 +75,19 @@ describe("P0 unit coverage", () => {
       { id: "real", level: 1, text: "Real" },
       { id: "中文标题", level: 2, text: "中文标题" }
     ]);
+  });
+
+  test("markdown block offsets preserve CRLF newline width", () => {
+    const markdown = "# A\r\n\r\n## B\r\nSame sentence.\r\n\r\n## C\r\nOther.\r\n";
+    const parsed = parseMarkdownBlocks(markdown);
+    const paragraph = parsed.blocks.find((block) => block.text.includes("Same sentence."));
+
+    expect(paragraph).toBeDefined();
+    if (!paragraph) {
+      return;
+    }
+    expect(paragraph.start).toBe(markdown.indexOf("Same sentence."));
+    expect(markdown.slice(paragraph.start, paragraph.end)).toBe("Same sentence.\r\n");
   });
 
   test("concurrent review writes keep valid JSON and do not drop annotations or replies", async () => {

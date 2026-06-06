@@ -88,6 +88,7 @@ const DOCUMENT_ASSET_EXTENSIONS = new Set([
   ".svg",
   ".webp"
 ]);
+const API_JSON_BODY_LIMIT = "8mb";
 
 export function startServer(options: StartServerOptions): Promise<StartedServer> {
   const app = express();
@@ -95,7 +96,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
   let markdownPath = options.markdownPath;
   const documentContentCache = new Map<string, string>();
 
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: API_JSON_BODY_LIMIT }));
 
   app.get("/health", (_request, response) => {
     response.json({ ok: true });

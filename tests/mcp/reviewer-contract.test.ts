@@ -81,4 +81,33 @@ describe("P0 MCP-equivalent reviewer contract", () => {
       await fixture.cleanup();
     }
   });
+
+  test("annotation context uses the anchor location when selected text is repeated", async () => {
+    const fixture = await createTempFixture("duplicate-text.md");
+    try {
+      const review = await createAnnotation(fixture.markdownPath, {
+        body: "第二处重复文本",
+        anchor: {
+          kind: "text",
+          headingId: "second",
+          headingText: "Second",
+          blockId: "block-4",
+          blockIndex: 4,
+          startOffset: 0,
+          endOffset: "Same sentence.".length,
+          selectedText: "Same sentence.",
+          prefix: "",
+          suffix: "\n",
+          anchorPrecision: "exact"
+        }
+      });
+
+      const context = await getAnnotationContext(fixture.markdownPath, review.annotations[0].id);
+      expect(context.beforeMarkdown).toContain("## Second");
+      expect(context.afterMarkdown).not.toContain("## Second");
+      expect(context.afterMarkdown).not.toContain("Same sentence.");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });

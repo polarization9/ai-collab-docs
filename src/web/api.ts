@@ -51,6 +51,24 @@ export async function fetchDocument(documentPath?: string): Promise<ReviewDocume
   return (await response.json()) as ReviewDocument;
 }
 
+export async function fetchDocumentAssetObjectUrl(
+  src: string,
+  documentPath: string
+): Promise<string> {
+  const response = await fetch(
+    withDocumentPath(`/api/document-asset?src=${encodeURIComponent(src)}`, documentPath),
+    {
+      headers: getApiHeaders(false)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response));
+  }
+
+  return URL.createObjectURL(await response.blob());
+}
+
 export async function fetchSession(): Promise<ReviewSession> {
   return requestJson<ReviewSession>("/api/session");
 }

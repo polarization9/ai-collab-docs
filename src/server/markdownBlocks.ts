@@ -31,23 +31,27 @@ export type ParsedMarkdownBlocks = {
   blocks: MarkdownBlock[];
 };
 
+type MarkdownLine = {
+  text: string;
+  start: number;
+  nextOffset: number;
+};
+
 export function parseMarkdownBlocks(markdown: string): ParsedMarkdownBlocks {
   const headings = parseHeadings(markdown);
   const blocks: Omit<MarkdownBlock, "fingerprint">[] = [];
-  const lines = markdown.split(/\r?\n/);
-  let offset = 0;
+  const lines = splitMarkdownLines(markdown);
   let index = 0;
   let headingIndex = 0;
   let currentHeading: Heading | null = null;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    const lineStart = offset;
-    const lineEnd = lineStart + line.length;
-    const nextOffset = lineEnd + 1;
+    const lineRecord = lines[lineIndex];
+    const line = lineRecord.text;
+    const lineStart = lineRecord.start;
+    const nextOffset = lineRecord.nextOffset;
 
     if (!line.trim()) {
-      offset = nextOffset;
       continue;
     }
 
@@ -60,10 +64,10 @@ export function parseMarkdownBlocks(markdown: string): ParsedMarkdownBlocks {
       let endOffset = nextOffset;
 
       for (let cursor = lineIndex + 1; cursor < lines.length; cursor += 1) {
-        const closeMatch = lines[cursor].match(/^ {0,3}(`{3,}|~{3,})/);
+        const closeMatch = lines[cursor].text.match(/^ {0,3}(`{3,}|~{3,})/);
         const closeMarker = closeMatch?.[1]?.[0];
         const closeLength = closeMatch?.[1]?.length ?? 0;
-        endOffset += lines[cursor].length + 1;
+        endOffset = lines[cursor].nextOffset;
         endLineIndex = cursor;
         if (closeMarker === marker && closeLength >= fenceLength) {
           break;
@@ -81,7 +85,6 @@ export function parseMarkdownBlocks(markdown: string): ParsedMarkdownBlocks {
         )
       );
       lineIndex = endLineIndex;
-      offset = endOffset;
       continue;
     }
 
@@ -89,7 +92,6 @@ export function parseMarkdownBlocks(markdown: string): ParsedMarkdownBlocks {
     if (headingMatch) {
       currentHeading = headings[headingIndex++] ?? currentHeading;
       blocks.push(createBlock(markdown, index++, "heading", lineStart, nextOffset, currentHeading));
-      offset = nextOffset;
       continue;
     }
 
@@ -98,27 +100,24 @@ export function parseMarkdownBlocks(markdown: string): ParsedMarkdownBlocks {
       let endOffset = nextOffset;
       let endLineIndex = lineIndex;
       for (let cursor = lineIndex + 1; cursor < lines.length; cursor += 1) {
-        if (!looksLikeTableLine(lines[cursor])) {
+        if (!looksLikeTableLine(lines[cursor].text)) {
           break;
         }
-        endOffset += lines[cursor].length + 1;
+        endOffset = lines[cursor].nextOffset;
         endLineIndex = cursor;
       }
       blocks.push(createBlock(markdown, index++, "table", tableStart, endOffset, currentHeading));
       lineIndex = endLineIndex;
-      offset = endOffset;
       continue;
     }
 
     if (/^ {0,3}([-*+]|\d+[.)])\s+/.test(line)) {
       blocks.push(createBlock(markdown, index++, "list-item", lineStart, nextOffset, currentHeading));
-      offset = nextOffset;
       continue;
     }
 
     if (/^ {0,3}>\s?/.test(line)) {
       blocks.push(createBlock(markdown, index++, "blockquote", lineStart, nextOffset, currentHeading));
-      offset = nextOffset;
       continue;
     }
 
@@ -126,7 +125,7 @@ export function parseMarkdownBlocks(markdown: string): ParsedMarkdownBlocks {
     let paragraphEnd = nextOffset;
     let paragraphEndLineIndex = lineIndex;
     for (let cursor = lineIndex + 1; cursor < lines.length; cursor += 1) {
-      const candidate = lines[cursor];
+      const candidate = lines[cursor].text;
       if (
         !candidate.trim() ||
         candidate.match(/^ {0,3}(#{1,6})\s+/) ||
@@ -137,20 +136,33 @@ export function parseMarkdownBlocks(markdown: string): ParsedMarkdownBlocks {
       ) {
         break;
       }
-      paragraphEnd += candidate.length + 1;
+      paragraphEnd = lines[cursor].nextOffset;
       paragraphEndLineIndex = cursor;
     }
     blocks.push(
       createBlock(markdown, index++, "paragraph", paragraphStart, paragraphEnd, currentHeading)
     );
     lineIndex = paragraphEndLineIndex;
-    offset = paragraphEnd;
   }
 
   return {
     headings,
     blocks: addNeighborFingerprints(blocks)
   };
+}
+
+function splitMarkdownLines(markdown: string): MarkdownLine[] {
+  const rawLines = markdown.split("\n");
+  let offset = 0;
+
+  return rawLines.map((rawLine, index) => {
+    const hasLineBreak = index < rawLines.length - 1;
+    const text = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    const start = offset;
+    const nextOffset = start + rawLine.length + (hasLineBreak ? 1 : 0);
+    offset = nextOffset;
+    return { text, start, nextOffset };
+  });
 }
 
 export function normalizeMarkdownText(text: string): string {
@@ -215,8 +227,11 @@ function addNeighborFingerprints(blocks: Omit<MarkdownBlock, "fingerprint">[]): 
   });
 }
 
-function isTableStart(lines: string[], lineIndex: number): boolean {
-  return looksLikeTableLine(lines[lineIndex]) && looksLikeTableDivider(lines[lineIndex + 1] ?? "");
+function isTableStart(lines: MarkdownLine[], lineIndex: number): boolean {
+  return (
+    looksLikeTableLine(lines[lineIndex].text) &&
+    looksLikeTableDivider(lines[lineIndex + 1]?.text ?? "")
+  );
 }
 
 function looksLikeTableLine(line: string): boolean {

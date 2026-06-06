@@ -56,6 +56,23 @@ describe("P0 server API coverage", () => {
         headers: { "x-margent-token": "secret-token" }
       });
       expect(allowed.status).toBe(200);
+
+      const deniedAsset = await fetch(
+        `${started.url}/api/document-asset?src=${encodeURIComponent(
+          "images/local image with space.svg"
+        )}&documentPath=${encodeURIComponent(fixture.markdownPath)}`
+      );
+      expect(deniedAsset.status).toBe(401);
+
+      const allowedAsset = await fetch(
+        `${started.url}/api/document-asset?src=${encodeURIComponent(
+          "images/local image with space.svg"
+        )}&documentPath=${encodeURIComponent(fixture.markdownPath)}`,
+        {
+          headers: { "x-margent-token": "secret-token" }
+        }
+      );
+      expect(allowedAsset.status).toBe(200);
     } finally {
       await fixture.cleanup();
     }
@@ -195,6 +212,34 @@ describe("P0 server API coverage", () => {
       } else {
         process.env.MARGENT_DISABLE_CODEX_BRIDGE = previousDisable;
       }
+      await fixture.cleanup();
+    }
+  });
+
+  test("saves markdown documents larger than the old 1MB JSON limit", async () => {
+    const fixture = await createTempFixture();
+    try {
+      const started = await startServer({ markdownPath: fixture.markdownPath, port: 0 });
+      startedServers.push(started);
+
+      const document = await fetchJson<ReviewDocument>(`${started.url}/api/document`);
+      const largeContent = `# Large Save Fixture\n\n${"大文档保存内容 ".repeat(90000)}`;
+      expect(Buffer.byteLength(JSON.stringify({ content: largeContent }), "utf8")).toBeGreaterThan(
+        1024 * 1024
+      );
+
+      const saved = await fetchJson<{ document: ReviewDocument }>(`${started.url}/api/document`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: largeContent,
+          baseContentHash: document.body.contentHash
+        })
+      });
+
+      expect(saved.status).toBe(200);
+      expect(saved.body.document.content).toBe(largeContent);
+    } finally {
       await fixture.cleanup();
     }
   });

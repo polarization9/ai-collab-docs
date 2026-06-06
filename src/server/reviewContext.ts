@@ -5,6 +5,7 @@ import type {
   ReviewAnnotation
 } from "../shared/reviewTypes.js";
 import { loadReviewDocument } from "./document.js";
+import { parseMarkdownBlocks, type MarkdownBlock } from "./markdownBlocks.js";
 import { AnnotationNotFoundError, loadReviewFile } from "./review.js";
 
 const CONTEXT_RADIUS = 1200;
@@ -46,11 +47,9 @@ function findFocusIndex(
   heading: Heading | null
 ): number {
   const selectedText = getAnchorSelectedText(annotation.anchor);
-  if (selectedText) {
-    const directIndex = markdown.indexOf(selectedText);
-    if (directIndex >= 0) {
-      return directIndex;
-    }
+  const anchoredIndex = findAnchoredSelectedTextIndex(markdown, annotation.anchor, selectedText);
+  if (anchoredIndex >= 0) {
+    return anchoredIndex;
   }
 
   if (annotation.anchor.kind === "text") {
@@ -77,6 +76,98 @@ function findFocusIndex(
   }
 
   return 0;
+}
+
+type FocusCandidate = {
+  index: number;
+  block: MarkdownBlock;
+  score: number;
+};
+
+function findAnchoredSelectedTextIndex(
+  markdown: string,
+  anchor: ReviewAnchor,
+  selectedText: string
+): number {
+  if (!selectedText) {
+    return -1;
+  }
+
+  const parsed = parseMarkdownBlocks(markdown);
+  const candidates = parsed.blocks.flatMap((block) =>
+    findAllIndexes(block.text, selectedText).map((index) => ({
+      index: block.start + index,
+      block,
+      score: 0
+    }))
+  );
+
+  if (candidates.length === 0) {
+    return markdown.indexOf(selectedText);
+  }
+
+  return scoreFocusCandidates(candidates, anchor, markdown)[0]?.index ?? -1;
+}
+
+function scoreFocusCandidates(
+  candidates: FocusCandidate[],
+  anchor: ReviewAnchor,
+  markdown: string
+): FocusCandidate[] {
+  return candidates
+    .map((candidate) => {
+      let score = 1;
+
+      if (anchor.headingId && candidate.block.headingId === anchor.headingId) {
+        score += 32;
+      } else if (anchor.headingText && candidate.block.headingText === anchor.headingText) {
+        score += 24;
+      }
+
+      if ("blockId" in anchor && candidate.block.id === anchor.blockId) {
+        score += 24;
+      }
+      if ("blockIndex" in anchor && candidate.block.index === anchor.blockIndex) {
+        score += 10;
+      }
+
+      if (anchor.kind === "text") {
+        if (typeof anchor.markdownOffset === "number") {
+          const distance = Math.abs(anchor.markdownOffset - candidate.index);
+          score += distance <= 2 ? 20 : distance <= 120 ? 10 : distance <= 1000 ? 4 : 0;
+        }
+        if (anchor.prefix && markdown.slice(0, candidate.index).endsWith(anchor.prefix)) {
+          score += 18;
+        }
+        if (
+          anchor.suffix &&
+          markdown.slice(candidate.index + anchor.selectedText.length).startsWith(anchor.suffix)
+        ) {
+          score += 18;
+        }
+      }
+
+      return { ...candidate, score };
+    })
+    .sort((left, right) => right.score - left.score);
+}
+
+function findAllIndexes(text: string, query: string): number[] {
+  if (!query) {
+    return [];
+  }
+
+  const indexes: number[] = [];
+  let offset = 0;
+  while (offset < text.length) {
+    const index = text.indexOf(query, offset);
+    if (index < 0) {
+      break;
+    }
+    indexes.push(index);
+    offset = index + Math.max(1, query.length);
+  }
+  return indexes;
 }
 
 function getRelatedMarkdown(markdown: string, focusIndex: number, heading: Heading | null): string {

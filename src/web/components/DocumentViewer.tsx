@@ -4,12 +4,15 @@ import {
   lazy,
   memo,
   Suspense,
+  useEffect,
+  useState,
   type ReactNode
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import type { Heading, HeadingLevel, ReviewDocument } from "../../shared/types";
+import { fetchDocumentAssetObjectUrl } from "../api";
 import { CodeBlock } from "./CodeBlock";
 import { ResizableTable } from "./ResizableTable";
 
@@ -151,12 +154,11 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
     },
     img({ alt, src, title }) {
       return (
-        <img
-          className="document-image"
-          src={resolveDocumentImageSrc(src, document.absolutePath)}
+        <DocumentImage
           alt={alt ?? ""}
+          documentPath={document.absolutePath}
+          src={src}
           title={title}
-          loading="lazy"
         />
       );
     }
@@ -171,7 +173,65 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
   );
 });
 
-function resolveDocumentImageSrc(src: string | undefined, documentPath: string): string {
+function DocumentImage({
+  alt,
+  documentPath,
+  src,
+  title
+}: {
+  alt: string;
+  documentPath: string;
+  src?: string;
+  title?: string;
+}) {
+  const [objectUrl, setObjectUrl] = useState("");
+  const directSrc = getDirectImageSrc(src);
+
+  useEffect(() => {
+    if (directSrc !== null || !src) {
+      setObjectUrl("");
+      return;
+    }
+
+    let cancelled = false;
+    let nextObjectUrl = "";
+
+    setObjectUrl("");
+    void fetchDocumentAssetObjectUrl(src, documentPath)
+      .then((url) => {
+        nextObjectUrl = url;
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        setObjectUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setObjectUrl("");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (nextObjectUrl) {
+        URL.revokeObjectURL(nextObjectUrl);
+      }
+    };
+  }, [directSrc, documentPath, src]);
+
+  return (
+    <img
+      className="document-image"
+      src={directSrc ?? (objectUrl || undefined)}
+      alt={alt}
+      title={title}
+      loading="lazy"
+    />
+  );
+}
+
+function getDirectImageSrc(src: string | undefined): string | null {
   if (!src) {
     return "";
   }
@@ -180,7 +240,7 @@ function resolveDocumentImageSrc(src: string | undefined, documentPath: string):
     return src;
   }
 
-  return `/api/document-asset?src=${encodeURIComponent(src)}&documentPath=${encodeURIComponent(documentPath)}`;
+  return null;
 }
 
 function stringifyReactNode(node: ReactNode): string {
