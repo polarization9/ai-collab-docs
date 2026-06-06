@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useI18n } from "../../i18n";
 import { MermaidMinimap } from "./MermaidMinimap";
 import type { MermaidActionHandlers, MermaidBackground, SvgViewBox } from "./types";
 import { ensureViewBox, sanitizeSvg, setViewBox } from "./svgUtils";
@@ -51,6 +52,7 @@ export function MermaidLightbox({
   initialZoom = 1,
   onClose
 }: MermaidLightboxProps) {
+  const { t } = useI18n();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const backdropRef = useRef<HTMLDivElement | null>(null);
   const svgHostRef = useRef<HTMLDivElement | null>(null);
@@ -359,33 +361,33 @@ export function MermaidLightbox({
         className={`mermaid-lightbox mermaid-bg-${background}`}
         role="dialog"
         aria-modal="true"
-        aria-label="Mermaid diagram lightbox"
+        aria-label={t("mermaid.lightbox")}
       >
         <div className="mermaid-lightbox-topbar">
-          <div className="mermaid-lightbox-title">Mermaid Diagram</div>
+          <div className="mermaid-lightbox-title">{t("mermaid.lightbox")}</div>
           <div className="mermaid-lightbox-actions">
-            <IconButton label="缩小" onClick={() => zoomFromCenter(zoomAt, (currentZoom) => currentZoom - ZOOM_STEP, viewportRef)}>
+            <IconButton label={t("mermaid.zoomOut")} onClick={() => zoomFromCenter(zoomAt, (currentZoom) => currentZoom - ZOOM_STEP, viewportRef)}>
               <Minus size={16} />
             </IconButton>
-            <IconButton label="放大" onClick={() => zoomFromCenter(zoomAt, (currentZoom) => currentZoom + ZOOM_STEP, viewportRef)}>
+            <IconButton label={t("mermaid.zoomIn")} onClick={() => zoomFromCenter(zoomAt, (currentZoom) => currentZoom + ZOOM_STEP, viewportRef)}>
               <Plus size={16} />
             </IconButton>
-            <IconButton label="重置视图" onClick={resetView}>
+            <IconButton label={t("mermaid.resetView")} onClick={resetView}>
               <RotateCcw size={16} />
             </IconButton>
-            <IconButton label="复制源码" onClick={actions.copySource}>
+            <IconButton label={t("mermaid.copySource")} onClick={actions.copySource}>
               <ClipboardCopy size={16} />
             </IconButton>
-            <IconButton label="复制 PNG" onClick={actions.copyPng}>
+            <IconButton label={t("mermaid.copyPng")} onClick={actions.copyPng}>
               <FileImage size={16} />
             </IconButton>
-            <IconButton label="导出 PNG" onClick={actions.exportPng}>
+            <IconButton label={t("mermaid.exportPng")} onClick={actions.exportPng}>
               <Image size={16} />
             </IconButton>
-            <IconButton label={background === "light" ? "切换为暗色" : "切换为亮色"} onClick={actions.toggleBackground}>
+            <IconButton label={background === "light" ? t("mermaid.switchDark") : t("mermaid.switchLight")} onClick={actions.toggleBackground}>
               <Palette size={16} />
             </IconButton>
-            <IconButton label="关闭" onClick={onClose}>
+            <IconButton label={t("mermaid.close")} onClick={onClose}>
               <X size={17} />
             </IconButton>
           </div>

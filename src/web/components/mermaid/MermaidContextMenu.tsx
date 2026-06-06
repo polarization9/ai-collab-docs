@@ -7,6 +7,7 @@ import {
   Palette
 } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
+import { useI18n } from "../../i18n";
 import type { MermaidActionHandlers } from "./types";
 
 type MermaidContextMenuProps = {
@@ -17,6 +18,7 @@ type MermaidContextMenuProps = {
 };
 
 export function MermaidContextMenu({ x, y, actions, onClose }: MermaidContextMenuProps) {
+  const { t } = useI18n();
   useEffect(() => {
     const handlePointerDown = () => onClose();
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -45,22 +47,22 @@ export function MermaidContextMenu({ x, y, actions, onClose }: MermaidContextMen
       role="menu"
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <MenuButton label="打开大图" onClick={() => runAction(actions.openLightbox)}>
+      <MenuButton label={t("mermaid.openLightbox")} onClick={() => runAction(actions.openLightbox)}>
         <Maximize2 size={15} />
       </MenuButton>
-      <MenuButton label="查看源码" onClick={() => runAction(actions.showSource)}>
+      <MenuButton label={t("mermaid.showSource")} onClick={() => runAction(actions.showSource)}>
         <Code2 size={15} />
       </MenuButton>
-      <MenuButton label="复制源码" onClick={() => runAction(actions.copySource)}>
+      <MenuButton label={t("mermaid.copySource")} onClick={() => runAction(actions.copySource)}>
         <ClipboardCopy size={15} />
       </MenuButton>
-      <MenuButton label="复制 PNG" onClick={() => runAction(actions.copyPng)}>
+      <MenuButton label={t("mermaid.copyPng")} onClick={() => runAction(actions.copyPng)}>
         <FileImage size={15} />
       </MenuButton>
-      <MenuButton label="导出 PNG" onClick={() => runAction(actions.exportPng)}>
+      <MenuButton label={t("mermaid.exportPng")} onClick={() => runAction(actions.exportPng)}>
         <Image size={15} />
       </MenuButton>
-      <MenuButton label="切换主题" onClick={() => runAction(actions.toggleBackground)}>
+      <MenuButton label={t("mermaid.switchTheme")} onClick={() => runAction(actions.toggleBackground)}>
         <Palette size={15} />
       </MenuButton>
     </div>
