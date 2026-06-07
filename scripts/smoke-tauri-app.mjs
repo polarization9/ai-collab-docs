@@ -53,6 +53,10 @@ if (fs.existsSync(appPath)) {
     exists("Contents/Resources/_up_/examples/Margent Quickstart.md"),
     "Missing packaged Quickstart example"
   );
+  assert(
+    exists("Contents/Resources/_up_/examples/Margent Quickstart.en.md"),
+    "Missing packaged English Quickstart example"
+  );
   assert(exists("Contents/Resources/_up_/node_modules"), "Missing packaged node_modules");
   assert(isExecutable("Contents/MacOS/Margent"), "Missing executable Margent binary");
   assert(isExecutable("Contents/MacOS/margent-server"), "Missing executable server sidecar");

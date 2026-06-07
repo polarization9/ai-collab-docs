@@ -5,20 +5,39 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
+  AppLanguage,
   AppSettings,
-  RecentDocument
+  RecentDocument,
+  ResolvedLocale
 } from "../shared/appSettingsTypes.js";
 
 const MAX_RECENT_DOCUMENTS = 12;
-const QUICKSTART_TEMPLATE_NAME = "Margent Quickstart.md";
 const QUICKSTART_TEMPLATE_VERSION = 1;
 const appStateMutationQueues = new Map<string, Promise<unknown>>();
+
+const QUICKSTART_TEMPLATES: Record<
+  ResolvedLocale,
+  {
+    templateName: string;
+    documentName: string;
+  }
+> = {
+  "zh-CN": {
+    templateName: "Margent Quickstart.md",
+    documentName: "Margent Quickstart.md"
+  },
+  "en-US": {
+    templateName: "Margent Quickstart.en.md",
+    documentName: "Margent Quickstart.en.md"
+  }
+};
 
 type StoredRecentDocument = Omit<RecentDocument, "exists">;
 
 type QuickstartState = {
   initializedAt: string;
   documentPath: string;
+  locale?: ResolvedLocale;
   templateVersion: number;
 };
 
@@ -116,6 +135,8 @@ async function ensureQuickstartRecentDocument(): Promise<void> {
     return;
   }
 
+  const settings = await loadAppSettings();
+  const quickstart = getQuickstartTemplate(settings.language);
   const statePath = getQuickstartStatePath();
   const existingState = await readJson<Partial<QuickstartState>>(statePath, {});
   if (
@@ -125,12 +146,12 @@ async function ensureQuickstartRecentDocument(): Promise<void> {
     return;
   }
 
-  const templatePath = findQuickstartTemplatePath();
+  const templatePath = findQuickstartTemplatePath(quickstart.templateName);
   if (!templatePath) {
     return;
   }
 
-  const documentPath = path.resolve(getQuickstartDocumentPath());
+  const documentPath = path.resolve(getQuickstartDocumentPath(quickstart.documentName));
   const recentDocumentsPath = getRecentDocumentsPath();
   try {
     await withAppStateMutation(recentDocumentsPath, async () => {
@@ -159,7 +180,7 @@ async function ensureQuickstartRecentDocument(): Promise<void> {
           [
             {
               path: documentPath,
-              name: QUICKSTART_TEMPLATE_NAME,
+              name: quickstart.documentName,
               lastOpenedAt: new Date().toISOString()
             },
             ...existing
@@ -170,6 +191,7 @@ async function ensureQuickstartRecentDocument(): Promise<void> {
       await writeJson(statePath, {
         initializedAt: new Date().toISOString(),
         documentPath,
+        locale: quickstart.locale,
         templateVersion: QUICKSTART_TEMPLATE_VERSION
       } satisfies QuickstartState);
     });
@@ -182,21 +204,51 @@ async function ensureQuickstartRecentDocument(): Promise<void> {
   }
 }
 
-function findQuickstartTemplatePath(): string | null {
+function getQuickstartTemplate(language: AppLanguage): {
+  locale: ResolvedLocale;
+  templateName: string;
+  documentName: string;
+} {
+  const locale = resolveQuickstartLocale(language);
+  return { locale, ...QUICKSTART_TEMPLATES[locale] };
+}
+
+function resolveQuickstartLocale(language: AppLanguage): ResolvedLocale {
+  if (language === "zh-CN" || language === "en-US") {
+    return language;
+  }
+
+  const systemLanguage = [
+    process.env.MARGENT_SYSTEM_LANGUAGE,
+    process.env.LC_ALL,
+    process.env.LC_MESSAGES,
+    process.env.LANG,
+    Intl.DateTimeFormat().resolvedOptions().locale
+  ].find((value) => typeof value === "string" && value.trim());
+
+  return systemLanguage?.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+}
+
+function findQuickstartTemplatePath(templateName: string): string | null {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const templateDir = process.env.MARGENT_QUICKSTART_TEMPLATE_DIR;
   const candidates = [
     process.env.MARGENT_QUICKSTART_TEMPLATE_PATH,
-    path.resolve(moduleDir, "..", "..", "examples", QUICKSTART_TEMPLATE_NAME),
-    path.resolve(process.cwd(), "examples", QUICKSTART_TEMPLATE_NAME)
+    templateDir ? path.resolve(templateDir, templateName) : undefined,
+    path.resolve(moduleDir, "..", "..", "examples", templateName),
+    path.resolve(process.cwd(), "examples", templateName)
   ].filter((candidate): candidate is string => Boolean(candidate));
 
   return candidates.find((candidate) => fsSync.existsSync(candidate)) ?? null;
 }
 
-function getQuickstartDocumentPath(): string {
+function getQuickstartDocumentPath(documentName: string): string {
+  const documentDir =
+    process.env.MARGENT_QUICKSTART_DOCUMENT_DIR ??
+    path.join(os.homedir(), "Documents", "Margent");
   return (
     process.env.MARGENT_QUICKSTART_DOCUMENT_PATH ??
-    path.join(os.homedir(), "Documents", "Margent", QUICKSTART_TEMPLATE_NAME)
+    path.join(documentDir, documentName)
   );
 }
 

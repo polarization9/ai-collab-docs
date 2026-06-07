@@ -1,7 +1,5 @@
 # Margent
 
-[中文说明](#中文说明)
-
 Margent is a local-first Markdown reading, annotation, light editing, and Codex collaboration desktop app.
 
 It opens local `.md` and `.markdown` files, renders them for review, supports Mermaid diagrams and wide tables, stores annotations next to the document, and can hand annotation tasks to Codex through local MCP tools.
@@ -14,17 +12,12 @@ The local app bundle includes its own Node.js runtime, so people who install the
 
 ## Main Features
 
-- Open local `.md` and `.markdown` files.
-- Restore and switch between multiple open documents with a tab bar.
 - Read rendered Markdown with Mermaid diagrams, copyable code blocks, and horizontally scrollable tables.
 - Resize table columns while reading.
 - Create text annotations, replies, nested replies, and resolved or unresolved states.
-- Edit annotations and replies.
-- Make lightweight Markdown edits and save with `Ctrl+S`.
-- Store review data locally in `.review.json` files next to the Markdown document.
+- Make lightweight Markdown edits.
 - Store Codex session links locally in `.codex.json` files next to the Markdown document.
 - Use English or Chinese UI copy.
-- Use bundled themes: default, blue-white, and gray-white.
 
 ## Install From a Release
 
@@ -32,7 +25,7 @@ For a packaged macOS build, download the `Margent_0.1.0_aarch64.dmg` artifact fr
 
 The current local build is ad-hoc signed. If macOS says the developer cannot be verified, right-click `Margent.app` in Finder and choose `Open`.
 
-After launching Margent for the first time, the recent documents list should include `Margent Quickstart.md`. Open it to try reading, annotations, Mermaid, tables, and light editing.
+After launching Margent for the first time, the recent documents list should include a Quickstart document for the active language. Open it to try reading, annotations, Mermaid, tables, and light editing.
 
 ## Build From Source
 
@@ -74,13 +67,14 @@ An English version is also available:
 examples/Margent Quickstart.en.md
 ```
 
-On first launch, Margent currently copies the Chinese quickstart to:
+On first launch, Margent copies the Quickstart document that matches the active language:
 
 ```text
 ~/Documents/Margent/Margent Quickstart.md
+~/Documents/Margent/Margent Quickstart.en.md
 ```
 
-If you prefer the English quickstart, open `examples/Margent Quickstart.en.md` manually from the repository or from a packaged copy.
+If the language setting is `system`, Chinese system languages use the Chinese Quickstart. Other system languages use the English Quickstart.
 
 ## Local Files
 
@@ -153,7 +147,6 @@ npm run check:release
 - Release notarization is not yet configured.
 - Codex handoff depends on local MCP and the current Codex environment.
 - Automatic Codex event delivery can queue when the target Codex session is busy.
-- The first-launch quickstart currently defaults to the Chinese document.
 
 ## License
 
@@ -175,17 +168,12 @@ Margent 正在积极开发中。当前桌面构建面向 macOS 12+，Apple Silic
 
 ## 主要功能
 
-- 打开本地 `.md` 和 `.markdown` 文件。
-- 通过顶部标签栏恢复和切换多个打开的文档。
 - 阅读渲染后的 Markdown，支持 Mermaid 图表、可复制代码块和横向滚动宽表。
 - 阅读时拖拽调整表格列宽。
 - 创建文本批注、回复、二级回复，并管理已解决 / 未解决状态。
-- 编辑批注和回复。
-- 进行轻量 Markdown 编辑，并通过 `Ctrl+S` 保存。
-- 把批注数据保存在 Markdown 文档旁边的 `.review.json` 文件中。
+- 进行轻量 Markdown 编辑。
 - 把 Codex 会话连接信息保存在 Markdown 文档旁边的 `.codex.json` 文件中。
 - 支持中文和英文界面文案。
-- 内置默认、蓝白、灰白三套主题。
 
 ## 从 Release 安装
 
@@ -193,7 +181,7 @@ Margent 正在积极开发中。当前桌面构建面向 macOS 12+，Apple Silic
 
 当前本地构建使用 ad-hoc 签名。如果 macOS 提示无法验证开发者，可以在 Finder 中右键 `Margent.app`，选择“打开”。
 
-首次启动 Margent 后，最近文件列表里应该会出现 `Margent Quickstart.md`。打开它可以体验阅读、批注、Mermaid、表格和轻编辑。
+首次启动 Margent 后，最近文件列表里应该会出现一份和当前语言匹配的 Quickstart 文档。打开它可以体验阅读、批注、Mermaid、表格和轻编辑。
 
 ## 从源码构建
 
@@ -235,13 +223,14 @@ examples/Margent Quickstart.md
 examples/Margent Quickstart.en.md
 ```
 
-首次启动时，Margent 当前会把中文 Quickstart 复制到：
+首次启动时，Margent 会根据当前语言复制对应的 Quickstart：
 
 ```text
 ~/Documents/Margent/Margent Quickstart.md
+~/Documents/Margent/Margent Quickstart.en.md
 ```
 
-如果你想使用英文 Quickstart，可以从仓库或打包资源中手动打开 `examples/Margent Quickstart.en.md`。
+如果语言设置是 `system`，中文系统语言会使用中文 Quickstart，其他系统语言会使用英文 Quickstart。
 
 ## 本地文件
 
@@ -314,7 +303,6 @@ npm run check:release
 - Release notarization 尚未配置。
 - Codex 协作依赖本地 MCP 工具和当前 Codex 环境。
 - 当目标 Codex 会话正忙时，自动投递批注任务可能会排队。
-- 首次启动默认注入中文 Quickstart。
 
 ## 许可证
 

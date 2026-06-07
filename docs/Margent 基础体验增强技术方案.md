@@ -471,8 +471,8 @@ type RecentDocument = {
 
 首次体验：
 
-- App bundle 内置 `examples/Margent Quickstart.md`。
-- 第一次读取最近文件时，如果尚未初始化 Quickstart，则复制到 `~/Documents/Margent/Margent Quickstart.md`。
+- App bundle 内置中文和英文 Quickstart 示例。
+- 第一次读取最近文件时，如果尚未初始化 Quickstart，则根据有效语言复制中文或英文 Quickstart 到 `~/Documents/Margent/`。
 - 复制成功后把 Quickstart 写入最近文件列表。
 - 初始化状态写入 app data，用户删除示例文档或从最近文件移除后，不再自动恢复。
 
