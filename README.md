@@ -12,12 +12,11 @@ The local app bundle includes its own Node.js runtime, so people who install the
 
 ## Main Features
 
-- Read rendered Markdown with Mermaid diagrams, copyable code blocks, and horizontally scrollable tables.
-- Resize table columns while reading.
-- Create text annotations, replies, nested replies, and resolved or unresolved states.
-- Make lightweight Markdown edits.
-- Store Codex session links locally in `.codex.json` files next to the Markdown document.
-- Use English or Chinese UI copy.
+- Lightweight Markdown reading for local documents, with a focused workspace for review and discussion.
+- Light editing inside the reading flow, so small wording and structure fixes do not require switching tools.
+- Local-first annotation workflows that keep review context and handling status next to the document.
+- Codex collaboration through a local handoff channel, so annotation tasks can be sent to a connected Codex session.
+- English and Chinese desktop experience.
 
 ## Install From a Release
 
@@ -168,12 +167,11 @@ Margent 正在积极开发中。当前桌面构建面向 macOS 12+，Apple Silic
 
 ## 主要功能
 
-- 阅读渲染后的 Markdown，支持 Mermaid 图表、可复制代码块和横向滚动宽表。
-- 阅读时拖拽调整表格列宽。
-- 创建文本批注、回复、二级回复，并管理已解决 / 未解决状态。
-- 进行轻量 Markdown 编辑。
-- 把 Codex 会话连接信息保存在 Markdown 文档旁边的 `.codex.json` 文件中。
-- 支持中文和英文界面文案。
+- 轻量化 Markdown 阅读，把本地文档变成适合审阅和讨论的工作区。
+- 在阅读流程里完成轻编辑，快速修正文案和结构，不需要切换工具。
+- 本地优先的批注工作流，把审阅上下文和处理状态留在文档旁边。
+- 通过本地协作通道连接 Codex，把批注任务交给已连接的 Codex 会话处理。
+- 支持中文和英文桌面体验。
 
 ## 从 Release 安装
 
