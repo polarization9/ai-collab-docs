@@ -1,0 +1,161 @@
+import fs from "node:fs/promises";
+import { describe, expect, test } from "vitest";
+import {
+  addAnnotationReply,
+  createAnnotation,
+  createReviewEvent,
+  loadReviewFile,
+  markReviewEventHandled,
+  updateAnnotationStatus
+} from "../../src/server/review.js";
+import { loadReviewDocument } from "../../src/server/document.js";
+import { saveReviewDocument } from "../../src/server/documentEdit.js";
+import { getAnnotationContext } from "../../src/server/reviewContext.js";
+import { createTempFixture } from "../helpers/fixtures.js";
+
+describe("P0 MCP-equivalent reviewer contract", () => {
+  test("reads context, edits document, replies, resolves, and marks event handled", async () => {
+    const fixture = await createTempFixture();
+    try {
+      let review = await createAnnotation(fixture.markdownPath, {
+        body: "把保存前内容改成保存后内容",
+        anchor: {
+          kind: "text",
+          headingId: "编辑闭环",
+          headingText: "编辑闭环",
+          blockId: "block-edit",
+          blockIndex: 1,
+          startOffset: 0,
+          endOffset: "保存前内容".length,
+          selectedText: "保存前内容",
+          prefix: "",
+          suffix: "。",
+          anchorPrecision: "exact"
+        }
+      });
+      const annotationId = review.annotations[0].id;
+
+      review = await createReviewEvent(fixture.markdownPath, {
+        annotationId,
+        deliveryMode: "manual"
+      });
+      const eventId = review.events?.[0].id;
+      expect(eventId).toBeTruthy();
+
+      const context = await getAnnotationContext(fixture.markdownPath, annotationId);
+      expect(context.selectedText).toBe("保存前内容");
+      expect(context.heading?.text).toBe("编辑闭环");
+      expect(context.relatedMarkdown).toContain("## 编辑闭环");
+
+      const document = await loadReviewDocument(fixture.markdownPath);
+      const nextContent = document.content.replace("保存前内容", "保存后内容");
+      const saved = await saveReviewDocument(
+        fixture.markdownPath,
+        {
+          content: nextContent,
+          baseContentHash: document.contentHash
+        },
+        {
+          annotationId,
+          preferredSelectedText: "保存后内容"
+        }
+      );
+      expect(
+        saved.repairedAnnotations.items.some((item) => item.annotationId === annotationId)
+      ).toBe(true);
+
+      await addAnnotationReply(fixture.markdownPath, annotationId, {
+        body: "已改为保存后内容。"
+      });
+      await updateAnnotationStatus(fixture.markdownPath, annotationId, { status: "resolved" });
+      await markReviewEventHandled(fixture.markdownPath, eventId as string);
+
+      const finalReview = await loadReviewFile(fixture.markdownPath);
+      const finalAnnotation = finalReview.annotations.find((item) => item.id === annotationId);
+      expect(await fs.readFile(fixture.markdownPath, "utf8")).toContain("保存后内容");
+      expect(finalAnnotation?.status).toBe("resolved");
+      expect(finalAnnotation?.anchor.selectedText).toBe("保存后内容");
+      expect(finalAnnotation?.replies.at(-1)?.body).toContain("已改为");
+      expect(finalReview.events?.find((event) => event.id === eventId)?.deliveryStatus).toBe("handled");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("annotation context uses the anchor location when selected text is repeated", async () => {
+    const fixture = await createTempFixture("duplicate-text.md");
+    try {
+      const review = await createAnnotation(fixture.markdownPath, {
+        body: "第二处重复文本",
+        anchor: {
+          kind: "text",
+          headingId: "second",
+          headingText: "Second",
+          blockId: "block-4",
+          blockIndex: 4,
+          startOffset: 0,
+          endOffset: "Same sentence.".length,
+          selectedText: "Same sentence.",
+          prefix: "",
+          suffix: "\n",
+          anchorPrecision: "exact"
+        }
+      });
+
+      const context = await getAnnotationContext(fixture.markdownPath, review.annotations[0].id);
+      expect(context.beforeMarkdown).toContain("## Second");
+      expect(context.afterMarkdown).not.toContain("## Second");
+      expect(context.afterMarkdown).not.toContain("Same sentence.");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("annotation context can mark a user reply as the follow-up focus", async () => {
+    const fixture = await createTempFixture();
+    try {
+      let review = await createAnnotation(fixture.markdownPath, {
+        body: "父级批注：这里需要进一步解释",
+        anchor: {
+          kind: "text",
+          headingId: "批注锚点",
+          headingText: "批注锚点",
+          blockId: "block-1",
+          blockIndex: 1,
+          startOffset: 0,
+          endOffset: "重复文本用于测试精确锚点".length,
+          selectedText: "重复文本用于测试精确锚点",
+          prefix: "",
+          suffix: "。",
+          anchorPrecision: "exact"
+        }
+      });
+      const annotationId = review.annotations[0].id;
+
+      review = await addAnnotationReply(fixture.markdownPath, annotationId, {
+        author: { type: "agent", name: "Codex" },
+        body: "Codex 先给出解释。"
+      });
+      const agentReplyId = review.annotations[0].replies[0].id;
+
+      review = await addAnnotationReply(fixture.markdownPath, annotationId, {
+        author: { type: "user", name: "User" },
+        body: "那这里是不是还要补一个边界条件？",
+        replyToReplyId: agentReplyId
+      });
+      const triggerReplyId = review.annotations[0].replies.at(-1)?.id as string;
+
+      const context = await getAnnotationContext(fixture.markdownPath, annotationId, {
+        triggerReplyId
+      });
+      expect(context.annotation.body).toContain("父级批注");
+      expect(context.replies).toHaveLength(2);
+      expect(context.triggerReply?.id).toBe(triggerReplyId);
+      expect(context.triggerReply?.body).toContain("边界条件");
+      expect(context.triggerReplyTarget?.id).toBe(agentReplyId);
+      expect(context.triggerReplyTarget?.author.type).toBe("agent");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});

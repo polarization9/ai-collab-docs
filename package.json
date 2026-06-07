@@ -1,9 +1,11 @@
 {
-  "name": "ai-md-reviewer",
+  "name": "margent",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "bin": {
-    "ai-md-reviewer": "./dist/cli.js"
+    "margent": "./dist/cli.js",
+    "margent-mcp": "./dist/mcpCli.js"
   },
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:web\"",
@@ -12,10 +14,38 @@
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:api": "vitest run tests/api",
+    "test:mcp": "vitest run tests/mcp",
+    "test:bridge": "vitest run tests/bridge",
+    "test:e2e": "playwright test",
+    "check:i18n-copy": "node scripts/check-i18n-copy.mjs",
+    "test:desktop:smoke": "node scripts/smoke-tauri-app.mjs",
+    "test:install:smoke": "node scripts/smoke-install-app.mjs",
+    "test:performance": "node scripts/smoke-performance.mjs",
+    "check:p0": "npm run typecheck && npm run check:i18n-copy && npm run test && npm run tauri:build && npm run test:desktop:smoke && git diff --check",
+    "check:p1": "npm run typecheck && npm run check:i18n-copy && npm run test && npm run test:e2e && git diff --check",
+    "check:p2": "npm run check:p1 && npm run tauri:build && npm run test:desktop:smoke && npm run test:install:smoke && npm run test:performance && git diff --check",
+    "check:release": "npm run check:p2",
+    "desktop:runtime": "node scripts/build-desktop-runtime.mjs",
+    "desktop:sidecar": "npm run build:server && npm run desktop:runtime && node scripts/build-desktop-sidecar.mjs",
+    "tauri:dev": "npm run desktop:sidecar && PATH=\"$HOME/.cargo/bin:$PATH\" tauri dev",
+    "tauri:build": "npm run build && npm run desktop:sidecar && PATH=\"$HOME/.cargo/bin:$PATH\" tauri build"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/search": "^6.7.0",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-deep-link": "^2.4.9",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "@vitejs/plugin-react": "^5.1.1",
+    "codemirror": "^6.0.2",
     "concurrently": "^9.2.1",
     "express": "^5.2.1",
     "github-slugger": "^2.0.0",
@@ -27,13 +57,17 @@
     "remark-gfm": "^4.0.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vite": "^7.2.7"
+    "vite": "^7.2.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@tauri-apps/cli": "^2.11.2",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.2",
     "@types/react": "^19.2.7",
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "vitest": "^4.1.8"
   },
   "engines": {
     "node": ">=20"

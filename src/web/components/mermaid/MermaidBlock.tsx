@@ -1,8 +1,11 @@
 import mermaid, { type MermaidConfig } from "mermaid";
+import { Image as ImageIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CodeBlock } from "../CodeBlock";
 import { MermaidContextMenu } from "./MermaidContextMenu";
 import { MermaidLightbox } from "./MermaidLightbox";
 import { MermaidToolbar } from "./MermaidToolbar";
+import { useI18n } from "../../i18n";
 import {
   copyPng,
   copyMermaidSource,
@@ -25,6 +28,7 @@ type MermaidBlockProps = {
   code: string;
   documentId: string;
   index: number;
+  reviewBlockProps?: Record<string, string>;
 };
 
 type ContextMenuState = {
@@ -34,13 +38,16 @@ type ContextMenuState = {
 
 let mermaidRenderQueue: Promise<unknown> = Promise.resolve();
 
-export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
+export function MermaidBlock({ code, documentId, index, reviewBlockProps }: MermaidBlockProps) {
+  const { t } = useI18n();
   const [background, setBackground] = useState<MermaidBackground>(() => getSystemTheme());
+  const [viewMode, setViewMode] = useState<"diagram" | "source">("diagram");
+  const appThemeKey = useAppThemeKey();
   const themeKey = background;
   const visualBackground = background;
   const pngBackground: PngExportOptions["background"] =
     visualBackground === "dark" ? "dark" : "white";
-  const cacheKey = getMermaidCacheKey(documentId, index, code, themeKey);
+  const cacheKey = getMermaidCacheKey(documentId, index, code, `${themeKey}-${appThemeKey}`);
   const [state, setState] = useState<MermaidRenderState>(() => {
     const cachedSvg = getCachedMermaidSvg(cacheKey);
     return cachedSvg ? { status: "ready", svg: cachedSvg } : { status: "rendering" };
@@ -71,7 +78,11 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
 
     setState({ status: "rendering" });
 
-    renderMermaidDiagram(`${renderIdRef.current}-${themeKey}`, code, getMermaidConfig(themeKey))
+    renderMermaidDiagram(
+      `${renderIdRef.current}-${themeKey}-${appThemeKey}`,
+      code,
+      getMermaidConfig(themeKey)
+    )
       .then(({ svg }) => {
         if (!cancelled) {
           setCachedMermaidSvg(cacheKey, svg);
@@ -82,7 +93,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
         if (!cancelled) {
           setState({
             status: "error",
-            message: error instanceof Error ? error.message : "Unable to render Mermaid diagram."
+            message: error instanceof Error ? error.message : t("mermaid.renderFailed")
           });
         }
       });
@@ -90,18 +101,18 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, code, themeKey]);
+  }, [appThemeKey, cacheKey, code, t, themeKey]);
 
   useLayoutEffect(() => {
     const svg = getCurrentSvg();
     if (svg) {
       applyAutoFit(svg);
     }
-  }, [state]);
+  }, [state, viewMode]);
 
   useEffect(() => {
     const block = blockRef.current;
-    if (!block || state.status !== "ready") {
+    if (!block || state.status !== "ready" || viewMode !== "diagram") {
       return;
     }
 
@@ -117,7 +128,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
 
     block.addEventListener("wheel", handleInlinePinch, { passive: false });
     return () => block.removeEventListener("wheel", handleInlinePinch);
-  }, [openLightbox, state.status]);
+  }, [openLightbox, state.status, viewMode]);
 
   useEffect(() => {
     return () => {
@@ -140,7 +151,7 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
       await action();
       showFeedback(label);
     } catch (error) {
-      showFeedback(error instanceof Error ? error.message : "Action failed");
+      showFeedback(error instanceof Error ? error.message : t("code.actionFailed"));
     }
   };
 
@@ -158,50 +169,79 @@ export function MermaidBlock({ code, documentId, index }: MermaidBlockProps) {
       openLightbox: () => {
         openLightbox();
       },
+      showSource: () => {
+        setViewMode("source");
+      },
       copySource: () => {
-        void runAction("复制成功", () => copyMermaidSource(code));
+        void runAction(t("code.copied"), () => copyMermaidSource(code));
       },
       copyPng: () => {
-        void runAction("复制成功", async () => {
+        void runAction(t("code.copied"), async () => {
           const svg = getCurrentSvg();
           if (!svg) {
-            throw new Error("SVG is not ready.");
+            throw new Error(t("mermaid.svgNotReady"));
           }
           await copyPng(svg, { scale: 2, background: pngBackground });
         });
       },
       exportPng: () => {
-        void runAction("导出成功", async () => {
+        void runAction(t("mermaid.exported"), async () => {
           const svg = getCurrentSvg();
           if (!svg) {
-            throw new Error("SVG is not ready.");
+            throw new Error(t("mermaid.svgNotReady"));
           }
           await downloadPng(svg, { scale: 2, background: pngBackground });
         });
       },
       toggleBackground
     }),
-    [code, openLightbox, pngBackground]
+    [code, openLightbox, pngBackground, t]
   );
+
+  if (viewMode === "source") {
+    return (
+      <CodeBlock
+        code={code}
+        language="mermaid"
+        className="language-mermaid"
+        reviewBlockProps={reviewBlockProps}
+        extraActions={[
+          {
+            label: t("mermaid.switchDiagram"),
+            icon: <ImageIcon size={15} />,
+            onClick: () => setViewMode("diagram")
+          }
+        ]}
+      />
+    );
+  }
 
   if (state.status === "error") {
     return (
       <figure className="mermaid-block mermaid-block-error">
         <figcaption>{state.message}</figcaption>
-        <pre>
-          <code>{code}</code>
-        </pre>
+        <CodeBlock
+          code={code}
+          language="mermaid"
+          className="language-mermaid"
+          reviewBlockProps={reviewBlockProps}
+        />
       </figure>
     );
   }
 
   if (state.status === "rendering") {
-    return <figure className="mermaid-block mermaid-block-loading">Rendering diagram...</figure>;
+    return (
+      <figure {...reviewBlockProps} className="mermaid-block mermaid-block-loading">
+        {t("mermaid.rendering")}
+      </figure>
+    );
   }
 
   return (
     <>
       <figure
+        {...reviewBlockProps}
         ref={blockRef}
         className={`mermaid-block mermaid-bg-${visualBackground}`}
         onClick={() => openLightbox()}
@@ -273,7 +313,7 @@ function getMermaidConfig(themeKey: MermaidBackground): MermaidConfig {
     : {
         ...baseMermaidConfig,
         darkMode: false,
-        themeVariables: lightThemeVariables
+        themeVariables: getLightThemeVariables()
       };
 }
 
@@ -281,6 +321,9 @@ const baseMermaidConfig: MermaidConfig = {
   startOnLoad: false,
   securityLevel: "strict",
   theme: "base",
+  flowchart: {
+    htmlLabels: false
+  },
   fontFamily:
     "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 };
@@ -302,6 +345,49 @@ const lightThemeVariables = {
   noteTextColor: "#3d3421",
   noteBorderColor: "#dcc276"
 };
+
+function useAppThemeKey(): string {
+  const [appThemeKey, setAppThemeKey] = useState(getAppThemeKey);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => setAppThemeKey(getAppThemeKey()));
+    observer.observe(document.documentElement, {
+      attributeFilter: ["data-theme"],
+      attributes: true
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  return appThemeKey;
+}
+
+function getAppThemeKey(): string {
+  return document.documentElement.dataset.theme || "default";
+}
+
+function getLightThemeVariables(): typeof lightThemeVariables {
+  const styles = getComputedStyle(document.documentElement);
+  const cssColor = (name: string, fallback: string) =>
+    styles.getPropertyValue(name).trim() || fallback;
+
+  return {
+    background: cssColor("--mermaid-light-bg", lightThemeVariables.background),
+    mainBkg: cssColor("--surface-control-muted", lightThemeVariables.mainBkg),
+    primaryColor: cssColor("--surface-selected-soft", lightThemeVariables.primaryColor),
+    primaryTextColor: cssColor("--color-ink", lightThemeVariables.primaryTextColor),
+    primaryBorderColor: cssColor("--color-border-strong", lightThemeVariables.primaryBorderColor),
+    lineColor: cssColor("--color-muted", lightThemeVariables.lineColor),
+    textColor: cssColor("--color-ink", lightThemeVariables.textColor),
+    secondaryColor: cssColor("--color-info-bg", lightThemeVariables.secondaryColor),
+    tertiaryColor: cssColor("--color-open-bg", lightThemeVariables.tertiaryColor),
+    edgeLabelBackground: cssColor("--color-paper-strong", lightThemeVariables.edgeLabelBackground),
+    clusterBkg: cssColor("--color-paper", lightThemeVariables.clusterBkg),
+    clusterBorder: cssColor("--color-border", lightThemeVariables.clusterBorder),
+    noteBkgColor: cssColor("--color-open-bg", lightThemeVariables.noteBkgColor),
+    noteTextColor: cssColor("--color-open-text", lightThemeVariables.noteTextColor),
+    noteBorderColor: cssColor("--color-warning", lightThemeVariables.noteBorderColor)
+  };
+}
 
 const darkThemeVariables = {
   background: "#151817",

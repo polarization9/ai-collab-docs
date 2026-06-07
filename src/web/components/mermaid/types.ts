@@ -21,6 +21,7 @@ export type PngExportOptions = {
 
 export type MermaidActionHandlers = {
   openLightbox: () => void;
+  showSource: () => void;
   copySource: () => void;
   copyPng: () => void;
   exportPng: () => void;

@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-06T00:00:00.000+08:00",
+  "title": "Design System: Margent",
+  "extensions": {
+    "northStar": "The Quiet Document Desk",
+    "register": "product",
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas Mist",
+        "canonical": "#f4f7f5"
+      },
+      "canvas-soft": {
+        "role": "neutral",
+        "displayName": "Sidebar Mist",
+        "canonical": "#edf3f0"
+      },
+      "paper-strong": {
+        "role": "neutral",
+        "displayName": "White Paper",
+        "canonical": "#ffffff"
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Workbench Teal",
+        "canonical": "#0d766e"
+      },
+      "accent-strong": {
+        "role": "primary",
+        "displayName": "Deep Action Teal",
+        "canonical": "#14564c"
+      },
+      "open-bg": {
+        "role": "semantic",
+        "displayName": "Open Comment",
+        "canonical": "#fff2d7"
+      },
+      "resolved-bg": {
+        "role": "semantic",
+        "displayName": "Resolved Comment",
+        "canonical": "#e3f1ec"
+      }
+    },
+    "elevation": {
+      "floating": "0 18px 54px rgba(20, 30, 26, 0.16)",
+      "subtleLift": "0 10px 28px rgba(20, 30, 26, 0.10)",
+      "rule": "Persistent app shell elements are flat at rest."
+    },
+    "motion": {
+      "duration": "150-200ms",
+      "easing": "ease-out",
+      "rule": "Motion conveys state changes only."
+    },
+    "breakpoints": {
+      "compact": "860px",
+      "documentChrome": "1024px"
+    },
+    "signatureComponents": {
+      "emptyStartupPage": {
+        "structure": "left recent-documents rail plus right open-document workspace",
+        "states": [
+          "no recent documents",
+          "recent documents available",
+          "recent document missing",
+          "loading or restoring",
+          "open failed"
+        ],
+        "rule": "Do not use a faux macOS window frame or marketing hero composition."
+      },
+      "documentTabs": {
+        "structure": "global app-level tab rail above TOC and document content",
+        "openButton": "pinned icon-only control at the right edge",
+        "rule": "Tabs are not document content."
+      }
+    },
+    "dos": [
+      "Keep the document as the largest and quietest surface.",
+      "Separate global document tabs from current-document controls.",
+      "Show loading, restoring, missing file, and open failure inline."
+    ],
+    "donts": [
+      "Do not make the empty page a marketing landing page.",
+      "Do not use faux macOS window chrome inside the app.",
+      "Do not put document tabs inside the document content column."
+    ]
+  }
+}

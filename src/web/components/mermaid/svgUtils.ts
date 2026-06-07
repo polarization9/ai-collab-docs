@@ -8,11 +8,13 @@ const STYLE_PROPS_TO_INLINE = [
   "font-family",
   "font-size",
   "font-weight",
+  "line-height",
   "opacity",
   "color",
   "background-color",
   "text-anchor"
 ];
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 export function parseViewBox(svg: SVGSVGElement): SvgViewBox | null {
   const attr = svg.getAttribute("viewBox");
@@ -113,10 +115,139 @@ export function cloneSvgWithStyles(svg: SVGSVGElement): SVGSVGElement {
     }
   }
 
+  replaceForeignObjectsWithText(clone);
   sanitizeSvg(clone);
   ensureViewBox(clone);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.setAttribute("xmlns", SVG_NS);
   return clone;
+}
+
+function replaceForeignObjectsWithText(svg: SVGSVGElement): void {
+  for (const foreignObject of Array.from(svg.querySelectorAll("foreignObject"))) {
+    const lines = extractForeignObjectLines(foreignObject);
+    if (lines.length === 0) {
+      foreignObject.remove();
+      continue;
+    }
+
+    const width = parseSvgLength(foreignObject.getAttribute("width"));
+    const height = parseSvgLength(foreignObject.getAttribute("height"));
+    const x = parseSvgLength(foreignObject.getAttribute("x"));
+    const y = parseSvgLength(foreignObject.getAttribute("y"));
+    const styleSource = getForeignObjectStyleSource(foreignObject);
+    const fontSize = getInlineStyle(styleSource, "font-size") || "16px";
+    const lineHeight = getLineHeight(getInlineStyle(styleSource, "line-height"), fontSize);
+    const color =
+      getInlineStyle(styleSource, "color") ||
+      getInlineStyle(styleSource, "fill") ||
+      "#333333";
+    const fontFamily = getInlineStyle(styleSource, "font-family");
+    const fontWeight = getInlineStyle(styleSource, "font-weight");
+    const text = document.createElementNS(SVG_NS, "text");
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+    const startY = centerY - ((lines.length - 1) * lineHeight) / 2;
+
+    text.setAttribute("x", String(centerX));
+    text.setAttribute("y", String(startY));
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("dominant-baseline", "middle");
+    text.setAttribute("font-size", fontSize);
+    text.setAttribute("fill", color);
+    if (fontFamily) {
+      text.setAttribute("font-family", fontFamily);
+    }
+    if (fontWeight) {
+      text.setAttribute("font-weight", fontWeight);
+    }
+
+    lines.forEach((line, index) => {
+      const tspan = document.createElementNS(SVG_NS, "tspan");
+      tspan.setAttribute("x", String(centerX));
+      tspan.setAttribute("y", String(startY + index * lineHeight));
+      tspan.textContent = line;
+      text.appendChild(tspan);
+    });
+
+    foreignObject.replaceWith(text);
+  }
+}
+
+function extractForeignObjectLines(foreignObject: Element): string[] {
+  const lines = [""];
+
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      appendText(lines, node.textContent ?? "");
+      return;
+    }
+
+    if (!(node instanceof Element)) {
+      return;
+    }
+
+    if (node.tagName.toLowerCase() === "br") {
+      lines.push("");
+      return;
+    }
+
+    for (const child of Array.from(node.childNodes)) {
+      walk(child);
+    }
+  };
+
+  for (const child of Array.from(foreignObject.childNodes)) {
+    walk(child);
+  }
+
+  const normalized = lines.map((line) => line.trim()).filter(Boolean);
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const fallback = foreignObject.textContent?.trim();
+  return fallback ? [fallback] : [];
+}
+
+function appendText(lines: string[], value: string): void {
+  const text = value.replace(/\s+/g, " ");
+  if (!text.trim()) {
+    return;
+  }
+
+  const index = lines.length - 1;
+  lines[index] = `${lines[index]}${text}`;
+}
+
+function getForeignObjectStyleSource(foreignObject: Element): Element | null {
+  return (
+    foreignObject.querySelector("span, p, div") ??
+    foreignObject
+  );
+}
+
+function getInlineStyle(element: Element | null, prop: string): string {
+  if (!element || !("style" in element)) {
+    return "";
+  }
+
+  const style = (element as Element & { style: CSSStyleDeclaration }).style;
+  return style.getPropertyValue(prop);
+}
+
+function getLineHeight(lineHeight: string, fontSize: string): number {
+  const fontSizePx = parseSvgLength(fontSize) || 16;
+  const parsedLineHeight = Number.parseFloat(lineHeight);
+
+  if (!Number.isFinite(parsedLineHeight)) {
+    return fontSizePx * 1.35;
+  }
+
+  if (lineHeight.trim().endsWith("px")) {
+    return parsedLineHeight;
+  }
+
+  return parsedLineHeight * fontSizePx;
 }
 
 export function sanitizeSvg(svg: SVGSVGElement): void {
