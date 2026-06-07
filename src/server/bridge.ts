@@ -19,6 +19,7 @@ import {
   hasActiveReviewEvent,
   loadReviewFile,
   markReviewEventDelivering,
+  recoverStaleDeliveringEvents,
   updateReviewEvent
 } from "./review.js";
 
@@ -30,6 +31,11 @@ type SendToThreadInput = {
   eventId: string;
   targetType: CodexTargetType;
   prompt: string;
+  onTurnStarted?: (delivery: {
+    threadId: string;
+    turnId?: string;
+    deliveryId: string;
+  }) => Promise<void>;
 };
 
 type SendToThreadResult = {
@@ -129,6 +135,8 @@ export async function retryReviewEvent(
 export async function dispatchReviewEvents(
   markdownPath: string
 ): Promise<BridgeSendAnnotationResponse> {
+  await recoverStaleDeliveringEvents(markdownPath);
+
   if (await hasActiveReviewEvent(markdownPath)) {
     return {
       ok: true,
@@ -180,7 +188,8 @@ export async function dispatchReviewEvents(
     documentPath: markdownPath,
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
-    targetType: target.type
+    targetType: target.type,
+    triggerReplyId: queuedEvent.triggerReplyId
   });
   const result = await adapter.sendToThread({
     threadId: target.threadId,
@@ -189,7 +198,34 @@ export async function dispatchReviewEvents(
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
     targetType: target.type,
-    prompt
+    prompt,
+    onTurnStarted: async ({ threadId, turnId, deliveryId }) => {
+      const now = new Date().toISOString();
+      const latestReview = await loadReviewFile(markdownPath);
+      const latestEvent = getEventFromReview(latestReview, queuedEvent.id);
+      if (latestEvent.deliveryStatus !== "delivering") {
+        return;
+      }
+
+      await updateReviewEvent(markdownPath, queuedEvent.id, {
+        deliveryStatus: "sent",
+        lastError: undefined,
+        delivery: {
+          ...latestEvent.delivery,
+          adapter: adapter.name,
+          threadId,
+          turnId,
+          deliveryId,
+          lastAttemptAt: now
+        }
+      });
+      await updateCodexDocumentLink(markdownPath, {
+        bridge: {
+          lastDeliveredEventId: queuedEvent.id,
+          lastDeliveryAt: now
+        }
+      });
+    }
   });
 
   if (!result.ok) {
@@ -241,9 +277,24 @@ export function createBridgePrompt(input: {
   annotationId: string;
   eventId: string;
   targetType: CodexTargetType;
+  triggerReplyId?: string;
 }): string {
+  const isFollowup = Boolean(input.triggerReplyId);
+  const contextCall = [
+    "   reviewer_get_annotation_context({",
+    `     documentPath: ${JSON.stringify(input.documentPath)},`,
+    input.triggerReplyId
+      ? `     annotationId: ${JSON.stringify(input.annotationId)},`
+      : `     annotationId: ${JSON.stringify(input.annotationId)}`,
+    ...(input.triggerReplyId
+      ? [`     triggerReplyId: ${JSON.stringify(input.triggerReplyId)}`]
+      : []),
+    "   })"
+  ];
   const base = [
-    "Margent 有一条新的批注任务需要处理。",
+    isFollowup
+      ? "Margent 有一条新的批注追问需要处理。"
+      : "Margent 有一条新的批注任务需要处理。",
     "",
     "文档路径：",
     input.documentPath,
@@ -254,29 +305,47 @@ export function createBridgePrompt(input: {
     "事件 ID：",
     input.eventId,
     "",
+    ...(input.triggerReplyId
+      ? [
+          "触发回复 ID：",
+          input.triggerReplyId,
+          ""
+        ]
+      : []),
     "目标会话类型：",
     input.targetType,
     "",
     "请按以下步骤处理：",
     "",
-    "1. 调用 Margent MCP 读取这条批注：",
-    "   reviewer_get_annotation_context({",
-    `     documentPath: ${JSON.stringify(input.documentPath)},`,
-    `     annotationId: ${JSON.stringify(input.annotationId)}`,
-    "   })",
+    "0. 如果当前工具列表里没有 Margent / reviewer 相关工具，先用工具发现能力搜索：",
+    "   - 搜索关键词：reviewer_get_annotation_context Margent annotations",
+    "   - 目标是加载 Margent MCP 的批注读取、回复、文档编辑和事件标记工具。",
     "",
-    "2. 根据批注内容判断处理方式：",
-    "   - 如果是提问型批注：直接回复批注。",
-    "   - 如果是明确修改型批注：修改 Markdown 正文，并回复处理说明。",
-    "   - 如果修改目标或意图不明确：只回复讨论或澄清问题，不擅自改正文。",
+    "1. 调用 Margent MCP 读取这条批注：",
+    ...contextCall,
+    "",
+    ...(isFollowup
+      ? [
+          "2. 这是用户对 Codex 回复发起的继续回复：",
+          "   - context.triggerReply 是本轮任务的主要用户意图。",
+          "   - 父级批注、原始选中文本、文档局部上下文和全部历史回复用于理解背景。",
+          "   - 不要把父级批注当成一条新的待处理问题重复处理，除非 triggerReply 明确要求重新处理。"
+        ]
+      : [
+          "2. 根据批注内容判断处理方式：",
+          "   - 如果是提问型批注：直接回复批注。",
+          "   - 如果是明确修改型批注：修改 Markdown 正文，并回复处理说明。",
+          "   - 如果修改目标或意图不明确：只回复讨论或澄清问题，不擅自改正文。"
+        ]),
     "",
     "3. 如果修改了正文，请保存文档，并让 Reviewer 重新标记批注锚点在修改后的文本上。",
     "",
     "4. 如果这条批注已经处理完成，可以按需要标记为 resolved。",
     "",
-    `5. 完成后，调用 reviewer_mark_review_event_handled({ eventId: ${JSON.stringify(
-      input.eventId
-    )} })。`,
+    "5. 完成后，调用 reviewer_mark_review_event_handled({",
+    `   documentPath: ${JSON.stringify(input.documentPath)},`,
+    `   eventId: ${JSON.stringify(input.eventId)}`,
+    "})。",
     "",
     "注意：",
     "- 不要要求用户把整份 Markdown 粘贴到对话里。",
@@ -305,14 +374,34 @@ async function getCurrentTarget(markdownPath: string): Promise<CodexTargetRefere
   return resolveCodexTarget(link);
 }
 
-async function resolveEventTarget(
+export async function resolveEventTarget(
   markdownPath: string,
   event: ReviewEvent
 ): Promise<CodexTargetReference | null> {
   if (event.targetThreadId && event.targetType) {
+    const eventCwd =
+      event.targetCwd ??
+      (event.targetType === "source" && event.targetThreadId === event.sourceThreadId
+        ? event.sourceCwd
+        : undefined);
+    if (eventCwd) {
+      return {
+        type: event.targetType,
+        threadId: event.targetThreadId,
+        cwd: eventCwd
+      };
+    }
+
+    const currentTarget = await getCurrentTarget(markdownPath);
+    const currentCwd =
+      currentTarget?.threadId === event.targetThreadId &&
+      currentTarget.type === event.targetType
+        ? currentTarget.cwd
+        : undefined;
     return {
       type: event.targetType,
-      threadId: event.targetThreadId
+      threadId: event.targetThreadId,
+      cwd: event.targetCwd ?? currentCwd
     };
   }
 
@@ -349,7 +438,7 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
         await client.start();
         await client.request("initialize", {
           clientInfo: {
-            name: "ai-md-reviewer",
+            name: "margent",
             title: "Margent",
             version: "0.1.0"
           },
@@ -383,6 +472,13 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
           ]
         });
         const turnId = extractTurnId(turnStartResult);
+        const deliveryId = turnId ? `app-server:${turnId}` : `app-server:${input.eventId}`;
+
+        await input.onTurnStarted?.({
+          threadId: resumedThreadId,
+          turnId,
+          deliveryId
+        });
 
         await client.waitForTurnCompleted(turnId);
 
@@ -390,7 +486,7 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
           ok: true,
           threadId: resumedThreadId,
           turnId,
-          deliveryId: turnId ? `app-server:${turnId}` : `app-server:${input.eventId}`
+          deliveryId
         };
       } catch (error) {
         return {
@@ -709,6 +805,10 @@ class CodexAppServerClient {
 let cachedCodexCommand: string | null | undefined;
 
 async function resolveCodexCommand(): Promise<string | null> {
+  if (process.env.MARGENT_DISABLE_CODEX_BRIDGE === "1") {
+    return null;
+  }
+
   if (cachedCodexCommand !== undefined) {
     return cachedCodexCommand;
   }
@@ -842,6 +942,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getTurnTimeoutMs(): number {
-  const value = Number(process.env.AI_MD_CODEX_TURN_TIMEOUT_MS ?? 600000);
+  const value = Number(process.env.MARGENT_CODEX_TURN_TIMEOUT_MS ?? 600000);
   return Number.isFinite(value) && value > 0 ? value : 600000;
 }

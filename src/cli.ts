@@ -161,8 +161,8 @@ function parseArgs(args: string[]): CliOptions {
 }
 
 function printUsage(): void {
-  console.log(`Usage: ai-md-reviewer <markdown-file> [--port 4317] [--mcp]`);
-  console.log(`       ai-md-reviewer --desktop-server [--port 0] [--document <markdown-file>]`);
+  console.log(`Usage: margent <markdown-file> [--port 4317] [--mcp]`);
+  console.log(`       margent --desktop-server [--port 0] [--document <markdown-file>]`);
 }
 
 function openUrl(url: string): void {

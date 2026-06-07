@@ -1,5 +1,12 @@
 node_modules/
 dist/
 artifacts/
+test-results/
+playwright-report/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+src-tauri/resources/node/
+src-tauri/resources/node/
 .DS_Store
 npm-debug.log*

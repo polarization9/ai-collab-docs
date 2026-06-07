@@ -23,6 +23,28 @@ export type ReviewReplyTarget = {
   authorType: ReviewAuthor["type"];
 };
 
+export type AnchorPrecision = "exact" | "text" | "block" | "heading" | "unknown";
+
+export type BlockFingerprint = {
+  kind: string;
+  textHash: string;
+  normalizedText: string;
+  headingId: string | null;
+  headingText: string | null;
+  previousTextHash?: string;
+  nextTextHash?: string;
+};
+
+export type AnchorRepairMeta = {
+  originalSelectedText?: string;
+  markdownOffset?: number;
+  blockFingerprint?: BlockFingerprint;
+  anchorPrecision?: AnchorPrecision;
+  repairConfidence?: number;
+  repairReason?: string;
+  lastRepairedAt?: string;
+};
+
 export type TextReviewAnchor = {
   kind: "text";
   headingId: string | null;
@@ -34,7 +56,24 @@ export type TextReviewAnchor = {
   selectedText: string;
   prefix: string;
   suffix: string;
-};
+} & AnchorRepairMeta;
+
+export type RangeReviewAnchor = {
+  kind: "range";
+  headingId: string | null;
+  headingText: string | null;
+  blockId: string;
+  blockIndex: number;
+  startBlockId: string;
+  startBlockIndex: number;
+  startOffset: number;
+  endBlockId: string;
+  endBlockIndex: number;
+  endOffset: number;
+  selectedText: string;
+  prefix: string;
+  suffix: string;
+} & AnchorRepairMeta;
 
 export type BlockReviewAnchor = {
   kind: "block";
@@ -43,7 +82,7 @@ export type BlockReviewAnchor = {
   blockId: string;
   blockIndex: number;
   selectedText: string;
-};
+} & AnchorRepairMeta;
 
 export type MermaidReviewAnchor = {
   kind: "mermaid";
@@ -51,17 +90,18 @@ export type MermaidReviewAnchor = {
   headingText: string | null;
   mermaidIndex: number;
   selectedText: string;
-};
+} & AnchorRepairMeta;
 
 export type DocumentReviewAnchor = {
   kind: "document";
   headingId: null;
   headingText: null;
   selectedText: "";
-};
+} & AnchorRepairMeta;
 
 export type ReviewAnchor =
   | TextReviewAnchor
+  | RangeReviewAnchor
   | BlockReviewAnchor
   | MermaidReviewAnchor
   | DocumentReviewAnchor;
@@ -88,14 +128,19 @@ export type ReviewEventDeliveryStatus =
   | "failed";
 
 export type ReviewEventDeliveryMode = "manual" | "auto";
+export type ReviewEventType = "annotation_created" | "reply_followup";
 
 export type ReviewEvent = {
   id: string;
-  type: "annotation_created";
+  type: ReviewEventType;
   documentPath: string;
   annotationId: string;
+  triggerReplyId?: string;
+  replyToReplyId?: string;
   sourceThreadId?: string;
+  sourceCwd?: string;
   targetThreadId?: string;
+  targetCwd?: string;
   targetType?: CodexTargetType;
   deliveryMode: ReviewEventDeliveryMode;
   deliveryStatus: ReviewEventDeliveryStatus;
@@ -130,6 +175,8 @@ export type AnnotationContext = {
   afterMarkdown: string;
   relatedMarkdown: string;
   replies: ReviewReply[];
+  triggerReply?: ReviewReply;
+  triggerReplyTarget?: ReviewReply;
 };
 
 export type CreateAnnotationRequest = {
@@ -159,6 +206,7 @@ export type UpdateAnnotationStatusRequest = {
 export type CreateReviewEventRequest = {
   annotationId: string;
   deliveryMode: ReviewEventDeliveryMode;
+  triggerReplyId?: string;
 };
 
 export type UpdateReviewEventRequest = {

@@ -1,0 +1,73 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="windowShadow" x="36" y="32" width="1368" height="836" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#24332F" flood-opacity="0.12"/>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%" filterUnits="objectBoundingBox" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#23332E" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .font { font-family: Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="900" fill="#EEF3F0"/>
+  <rect x="56" y="46" width="1328" height="808" rx="28" fill="#FBFDFB" filter="url(#windowShadow)"/>
+  <rect x="56" y="46" width="1328" height="808" rx="28" stroke="#C8D7D1"/>
+
+  <rect x="56" y="46" width="1328" height="58" rx="28" fill="#F8FBF9"/>
+  <path d="M56 104H1384" stroke="#D9E4DF"/>
+  <circle cx="88" cy="75" r="7" fill="#D8A5A5"/>
+  <circle cx="114" cy="75" r="7" fill="#E3C874"/>
+  <circle cx="140" cy="75" r="7" fill="#8FC5A6"/>
+  <text x="178" y="81" class="font" fill="#20332E" font-size="16" font-weight="760">Margent</text>
+  <text x="268" y="81" class="font" fill="#6D7E77" font-size="15" font-weight="560">文件</text>
+  <text x="320" y="81" class="font" fill="#6D7E77" font-size="15" font-weight="560">最近打开</text>
+  <text x="416" y="81" class="font" fill="#6D7E77" font-size="15" font-weight="560">设置</text>
+
+  <rect x="104" y="148" width="336" height="644" rx="18" fill="#F2F7F5" stroke="#D3E0DA"/>
+  <text x="136" y="196" class="font" fill="#22362F" font-size="25" font-weight="780">最近打开</text>
+  <text x="136" y="224" class="font" fill="#76877F" font-size="14" font-weight="520">继续阅读或重新打开本地 Markdown</text>
+
+  <rect x="132" y="260" width="280" height="86" rx="12" fill="#FFFFFF" stroke="#C9DCD4" filter="url(#softShadow)"/>
+  <rect x="150" y="282" width="34" height="42" rx="7" fill="#E4F0EA" stroke="#C5D8D0"/>
+  <path d="M159 294H176M159 304H174M159 314H169" stroke="#58756B" stroke-width="2" stroke-linecap="round"/>
+  <text x="200" y="292" class="font" fill="#20332E" font-size="15" font-weight="760">Margent 基础体验增强 PRD.md</text>
+  <text x="200" y="319" class="font" fill="#7A8A83" font-size="13" font-weight="520">docs · 今天 16:24</text>
+
+  <rect x="132" y="364" width="280" height="78" rx="12" fill="#FAFCFB" stroke="#D7E3DE"/>
+  <rect x="150" y="386" width="30" height="34" rx="6" fill="#EEF4F1" stroke="#D2E0D9"/>
+  <path d="M158 397H173M158 407H169" stroke="#6F837B" stroke-width="2" stroke-linecap="round"/>
+  <text x="196" y="393" class="font" fill="#31463F" font-size="15" font-weight="700">Feature List.md</text>
+  <text x="196" y="418" class="font" fill="#87958F" font-size="13">docs · 昨天</text>
+
+  <rect x="132" y="458" width="280" height="78" rx="12" fill="#FAFCFB" stroke="#D7E3DE"/>
+  <rect x="150" y="480" width="30" height="34" rx="6" fill="#EEF4F1" stroke="#D2E0D9"/>
+  <path d="M158 491H173M158 501H169" stroke="#6F837B" stroke-width="2" stroke-linecap="round"/>
+  <text x="196" y="487" class="font" fill="#31463F" font-size="15" font-weight="700">Codex 连接协作技术方案.md</text>
+  <text x="196" y="512" class="font" fill="#87958F" font-size="13">docs · 06/04</text>
+
+  <rect x="132" y="658" width="280" height="48" rx="10" fill="#E8F0EC" stroke="#D3E0DA"/>
+  <text x="166" y="688" class="font" fill="#4A625A" font-size="14" font-weight="720">清理不存在的最近文件</text>
+
+  <rect x="488" y="148" width="848" height="644" rx="22" fill="#FFFFFF" stroke="#DBE6E1"/>
+  <rect x="532" y="192" width="760" height="44" rx="12" fill="#F3F7F5" stroke="#D9E5DF"/>
+  <text x="556" y="220" class="mono" fill="#6B7D76" font-size="13">/Users/zoushangting/Documents/AI协作文档</text>
+
+  <circle cx="912" cy="342" r="58" fill="#E5F0EA" stroke="#C4D9CF"/>
+  <path d="M883 342H941M912 313V371" stroke="#416B5F" stroke-width="6" stroke-linecap="round"/>
+  <text x="692" y="455" class="font" fill="#13261F" font-size="38" font-weight="840">打开一份 Markdown 文档</text>
+  <text x="650" y="498" class="font" fill="#697B74" font-size="18" font-weight="520">Margent 会加载正文、目录、批注和 Codex 连接状态。</text>
+
+  <rect x="728" y="552" width="368" height="62" rx="14" fill="#183A32"/>
+  <text x="817" y="590" class="font" fill="#F8FCFA" font-size="18" font-weight="790">打开 Markdown 文件</text>
+  <path d="M782 582H804M793 571V593" stroke="#F8FCFA" stroke-width="3" stroke-linecap="round"/>
+
+  <rect x="774" y="634" width="276" height="48" rx="12" fill="#F6FAF8" stroke="#D3E0DA"/>
+  <text x="846" y="664" class="font" fill="#405951" font-size="15" font-weight="720">从最近文件打开</text>
+
+  <rect x="608" y="724" width="608" height="42" rx="12" fill="#FFF8E6" stroke="#E8D5A3"/>
+  <circle cx="634" cy="745" r="8" fill="#D7A946"/>
+  <text x="656" y="751" class="font" fill="#6A5628" font-size="14" font-weight="590">文件打开失败时在当前区域显示原因，并保留重新选择入口。</text>
+</svg>

@@ -7,6 +7,7 @@ import {
   Palette
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { useI18n } from "../../i18n";
 import type { MermaidActionHandlers, MermaidBackground } from "./types";
 
 type MermaidToolbarProps = {
@@ -15,25 +16,26 @@ type MermaidToolbarProps = {
 };
 
 export function MermaidToolbar({ actions, background }: MermaidToolbarProps) {
+  const { t } = useI18n();
   return (
-    <div className="mermaid-toolbar" aria-label="Mermaid diagram tools">
-      <ToolbarButton label="打开大图" onClick={actions.openLightbox}>
+    <div className="mermaid-toolbar" aria-label={t("mermaid.toolbar")}>
+      <ToolbarButton label={t("mermaid.openLightbox")} onClick={actions.openLightbox}>
         <Maximize2 size={15} />
       </ToolbarButton>
-      <ToolbarButton label="查看源码" onClick={actions.showSource}>
+      <ToolbarButton label={t("mermaid.showSource")} onClick={actions.showSource}>
         <Code2 size={15} />
       </ToolbarButton>
-      <ToolbarButton label="复制源码" onClick={actions.copySource}>
+      <ToolbarButton label={t("mermaid.copySource")} onClick={actions.copySource}>
         <ClipboardCopy size={15} />
       </ToolbarButton>
-      <ToolbarButton label="复制 PNG" onClick={actions.copyPng}>
+      <ToolbarButton label={t("mermaid.copyPng")} onClick={actions.copyPng}>
         <FileImage size={15} />
       </ToolbarButton>
-      <ToolbarButton label="导出 PNG" onClick={actions.exportPng}>
+      <ToolbarButton label={t("mermaid.exportPng")} onClick={actions.exportPng}>
         <Image size={15} />
       </ToolbarButton>
       <ToolbarButton
-        label={background === "light" ? "切换为暗色" : "切换为亮色"}
+        label={background === "light" ? t("mermaid.switchDark") : t("mermaid.switchLight")}
         onClick={actions.toggleBackground}
       >
         <Palette size={15} />

@@ -1,4 +1,18 @@
+import { copyTextToSystemClipboard } from "../api";
+import { writeNativeClipboardText } from "../desktop";
+
 export async function copyText(text: string): Promise<void> {
+  if (await writeNativeClipboardText(text)) {
+    return;
+  }
+
+  try {
+    await copyTextToSystemClipboard(text);
+    return;
+  } catch (error) {
+    console.warn("Unable to write clipboard through Margent server.", error);
+  }
+
   try {
     await navigator.clipboard.writeText(text);
     return;

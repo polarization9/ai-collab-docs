@@ -1,4 +1,5 @@
 import { CheckCircle2, CircleDot, Eye, FilePenLine, LoaderCircle, RotateCcw, Save, X } from "lucide-react";
+import { useI18n } from "../../i18n";
 
 export type EditorViewMode = "source" | "preview";
 
@@ -21,18 +22,20 @@ export function EditorToolbar({
   onCancel,
   onSave
 }: EditorToolbarProps) {
+  const { t } = useI18n();
+
   if (!isEditing) {
     return null;
   }
 
   return (
-    <div className={`editor-toolbar${isDirty ? " editor-toolbar-dirty" : ""}`} aria-label="编辑工具栏">
+    <div className={`editor-toolbar${isDirty ? " editor-toolbar-dirty" : ""}`} aria-label={t("editor.toolbar")}>
       <div className="editor-toolbar-left">
         <span className="editor-mode-mark" aria-hidden="true">
           <FilePenLine size={15} />
         </span>
         <div className="editor-mode-copy">
-          <span className="editor-mode-label">编辑文档</span>
+          <span className="editor-mode-label">{t("editor.title")}</span>
           <span
             className={`editor-save-state${
               isSaving
@@ -50,12 +53,12 @@ export function EditorToolbar({
             ) : (
               <CheckCircle2 size={13} />
             )}
-            {isSaving ? "保存中" : isDirty ? "未保存" : "已保存"}
+            {isSaving ? t("document.saving") : isDirty ? t("editor.dirty") : t("editor.clean")}
           </span>
         </div>
       </div>
 
-      <div className="editor-view-switch" role="tablist" aria-label="编辑视图">
+      <div className="editor-view-switch" role="tablist" aria-label={t("editor.view")}>
         <button
           type="button"
           className={viewMode === "source" ? "editor-view-switch-active" : ""}
@@ -63,7 +66,7 @@ export function EditorToolbar({
           onClick={() => onViewModeChange("source")}
         >
           <FilePenLine size={14} />
-          源码
+          {t("editor.source")}
         </button>
         <button
           type="button"
@@ -72,18 +75,18 @@ export function EditorToolbar({
           onClick={() => onViewModeChange("preview")}
         >
           <Eye size={14} />
-          预览
+          {t("editor.preview")}
         </button>
       </div>
 
       <div className="editor-toolbar-actions">
         <button className="editor-secondary-action" type="button" onClick={onCancel} disabled={isSaving}>
           {isDirty ? <RotateCcw size={14} /> : <X size={14} />}
-          {isDirty ? "放弃" : "退出"}
+          {isDirty ? t("editor.discard") : t("document.exit")}
         </button>
         <button className="editor-primary-action" type="button" onClick={onSave} disabled={!isDirty || isSaving}>
           <Save size={14} />
-          {isSaving ? "保存中" : "保存"}
+          {isSaving ? t("document.saving") : t("document.save")}
         </button>
       </div>
     </div>

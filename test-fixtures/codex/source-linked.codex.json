@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "documentPath": "__DOCUMENT_PATH__",
+  "source": {
+    "type": "codex",
+    "threadId": "thread_source_fixture",
+    "cwd": "/tmp/margent-fixture",
+    "createdAt": "2026-06-06T00:00:00.000Z",
+    "updatedAt": "2026-06-06T00:00:00.000Z"
+  },
+  "target": {
+    "type": "source",
+    "threadId": "thread_source_fixture",
+    "cwd": "/tmp/margent-fixture",
+    "configuredAt": "2026-06-06T00:00:00.000Z",
+    "configuredBy": "codex",
+    "configuredVia": "source"
+  },
+  "bridge": {
+    "autoSendNewAnnotations": true
+  }
+}

@@ -10,12 +10,17 @@ import {
   useState
 } from "react";
 import { parseHeadingLocations, parseHeadings } from "../../../shared/markdownHeadings";
-import type { ReviewAnchor, ReviewFile } from "../../../shared/reviewTypes";
+import type {
+  ReviewAnchor,
+  ReviewEventDeliveryStatus,
+  ReviewFile
+} from "../../../shared/reviewTypes";
 import type { CodexLinkResponse } from "../../../shared/codexTypes";
 import type { Heading, ReviewDocument } from "../../../shared/types";
 import {
   createSuccessorInstruction,
   fetchCodexLink,
+  fetchDocument,
   retryReviewEvent,
   saveDocument,
   sendAnnotationToCodex,
@@ -27,6 +32,7 @@ import { scrollToAnnotation } from "../../review/anchorResolve";
 import { useReview } from "../../hooks/useReview";
 import { copyText } from "../../utils/clipboard";
 import { DocumentViewer } from "../DocumentViewer";
+import { useI18n } from "../../i18n";
 import type {
   MarkdownEditorSelection,
   MarkdownSourceEditorHandle
@@ -41,11 +47,19 @@ const MarkdownSourceEditor = lazy(() =>
   }))
 );
 
+const AUTO_REVIEW_POLL_STATUSES = new Set<ReviewEventDeliveryStatus>([
+  "queued",
+  "delivering",
+  "sent",
+  "processing"
+]);
+
 type AnnotationWorkspaceProps = {
   document: ReviewDocument;
   initialReview?: ReviewFile | null;
   initialCodexLink?: CodexLinkResponse | null;
   onDocumentChange: (document: ReviewDocument) => void;
+  externalRefreshEnabled?: boolean;
 };
 
 type SwitchAnchor = {
@@ -56,19 +70,31 @@ type SwitchAnchor = {
   markdownOffset?: number;
 };
 
+function hasAutoReviewPollEvents(review: ReviewFile | null | undefined): boolean {
+  return Boolean(
+    review?.events?.some((event) => AUTO_REVIEW_POLL_STATUSES.has(event.deliveryStatus))
+  );
+}
+
 export function AnnotationWorkspace({
   document,
   initialReview = null,
   initialCodexLink = null,
-  onDocumentChange
+  onDocumentChange,
+  externalRefreshEnabled = true
 }: AnnotationWorkspaceProps) {
+  const { t } = useI18n();
   const contentRef = useRef<HTMLElement | null>(null);
   const editorRef = useRef<MarkdownSourceEditorHandle | null>(null);
   const pendingEditorAnchorRef = useRef<SwitchAnchor | null>(null);
   const pendingReadingAnchorRef = useRef<SwitchAnchor | null>(null);
+  const latestReviewRef = useRef<ReviewFile | null>(
+    initialReview?.documentId === document.id ? initialReview : null
+  );
+  const pendingDocumentRefreshRef = useRef(false);
   const [draft, setDraft] = useState<AnnotationDraft | null>(null);
   const [editorAnnotationDraft, setEditorAnnotationDraft] = useState<AnnotationDraft | null>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editorDraft, setEditorDraft] = useState(document.content);
   const [editorBaseContent, setEditorBaseContent] = useState(document.content);
@@ -78,12 +104,24 @@ export function AnnotationWorkspace({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [codexLink, setCodexLink] = useState<CodexLinkResponse | null>(initialCodexLink);
   const [codexLinkError, setCodexLinkError] = useState<string | null>(null);
-  const review = useReview(document.id, initialReview);
+  const review = useReview(document.id, initialReview, document.absolutePath);
   const isDirty = editorDraft !== editorBaseContent;
   const annotations = useMemo(
     () => (review.state.status === "ready" ? review.state.review.annotations : []),
     [review.state]
   );
+  const hasPendingReviewEvents = useMemo(
+    () =>
+      review.state.status === "ready" &&
+      hasAutoReviewPollEvents(review.state.review),
+    [review.state]
+  );
+
+  useEffect(() => {
+    if (review.state.status === "ready") {
+      latestReviewRef.current = review.state.review;
+    }
+  }, [review.state]);
 
   useEffect(() => {
     if (!isEditing || !isDirty) {
@@ -118,13 +156,57 @@ export function AnnotationWorkspace({
 
   const reloadCodexLink = useCallback(async () => {
     try {
-      setCodexLink(await fetchCodexLink());
+      setCodexLink(await fetchCodexLink(document.absolutePath));
       setCodexLinkError(null);
     } catch (error) {
       setCodexLink(null);
-      setCodexLinkError(error instanceof Error ? error.message : "连接状态加载失败");
+      setCodexLinkError(error instanceof Error ? error.message : t("document.codexStatusFailed"));
     }
-  }, []);
+  }, [document.absolutePath, t]);
+
+  const reloadDocumentFromDisk = useCallback(async () => {
+    try {
+      const nextDocument = await fetchDocument(document.absolutePath);
+      onDocumentChange(nextDocument);
+      void review.reload({ silent: true });
+      void reloadCodexLink();
+    } catch {
+      // Keep the current document visible; explicit user actions still surface load errors.
+    }
+  }, [document.absolutePath, onDocumentChange, reloadCodexLink, review.reload]);
+
+  const isInteractingWithDocument = useCallback(() => {
+    if (isEditing || isDirty || draft || editorAnnotationDraft) {
+      return true;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return false;
+    }
+
+    const container = contentRef.current;
+    if (!container) {
+      return false;
+    }
+
+    const range = selection.getRangeAt(0);
+    const commonAncestor =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+    return Boolean(commonAncestor && container.contains(commonAncestor));
+  }, [draft, editorAnnotationDraft, isDirty, isEditing]);
+
+  const reloadDocumentFromDiskWhenIdle = useCallback(() => {
+    if (isInteractingWithDocument()) {
+      pendingDocumentRefreshRef.current = true;
+      return;
+    }
+
+    pendingDocumentRefreshRef.current = false;
+    void reloadDocumentFromDisk();
+  }, [isInteractingWithDocument, reloadDocumentFromDisk]);
 
   useEffect(() => {
     if (initialCodexLink) {
@@ -136,10 +218,110 @@ export function AnnotationWorkspace({
     void reloadCodexLink();
   }, [document.id, initialCodexLink, reloadCodexLink]);
 
-  const captureSelection = () => {
+  useEffect(() => {
+    if (!isSidebarOpen) {
+      return;
+    }
+
+    const handleFocus = () => {
+      void reloadCodexLink();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [isSidebarOpen, reloadCodexLink]);
+
+  useEffect(() => {
+    if (!hasPendingReviewEvents) {
+      return;
+    }
+
+    const reloadBackgroundReview = async () => {
+      const previousReview = latestReviewRef.current;
+      const nextReview = await review.reload({ silent: true });
+      if (!nextReview) {
+        return;
+      }
+
+      if (hasAutoReviewPollEvents(previousReview) && !hasAutoReviewPollEvents(nextReview)) {
+        void reloadCodexLink();
+        reloadDocumentFromDiskWhenIdle();
+      }
+    };
+
+    const timer = window.setInterval(reloadBackgroundReview, 2500);
+    return () => window.clearInterval(timer);
+  }, [
+    hasPendingReviewEvents,
+    reloadCodexLink,
+    reloadDocumentFromDiskWhenIdle,
+    review.reload
+  ]);
+
+  useEffect(() => {
+    if (!externalRefreshEnabled) {
+      return;
+    }
+
+    if (
+      typeof window.document.visibilityState !== "undefined" &&
+      window.document.visibilityState === "hidden"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const pollExternalChanges = async () => {
+      try {
+        const nextDocument = await fetchDocument(document.absolutePath);
+        if (cancelled || nextDocument.contentHash === document.contentHash) {
+          return;
+        }
+        pendingDocumentRefreshRef.current = true;
+        reloadDocumentFromDiskWhenIdle();
+      } catch {
+        // External refresh is opportunistic; visible user actions still surface errors.
+      }
+    };
+
+    const timer = window.setInterval(pollExternalChanges, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    document.absolutePath,
+    document.contentHash,
+    externalRefreshEnabled,
+    reloadDocumentFromDiskWhenIdle
+  ]);
+
+  useEffect(() => {
+    if (!isSidebarOpen) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void review.reload({ silent: true });
+      void reloadCodexLink();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [isSidebarOpen, reloadCodexLink, review.reload]);
+
+  useEffect(() => {
+    if (!pendingDocumentRefreshRef.current || isInteractingWithDocument()) {
+      return;
+    }
+
+    pendingDocumentRefreshRef.current = false;
+    void reloadDocumentFromDisk();
+  }, [draft, editorAnnotationDraft, isInteractingWithDocument, reloadDocumentFromDisk]);
+
+  const captureSelection = useCallback(() => {
     if (isEditing) {
       return;
     }
+
     window.setTimeout(() => {
       const container = contentRef.current;
       if (!container) {
@@ -147,11 +329,28 @@ export function AnnotationWorkspace({
       }
       setDraft(captureAnnotationDraft(container, document.headings));
     }, 0);
-  };
+  }, [document.headings, isEditing]);
 
-  const selectAnnotation = (annotationId: string) => {
+  useEffect(() => {
+    if (isEditing) {
+      return;
+    }
+
+    window.document.addEventListener("mouseup", captureSelection);
+    window.addEventListener("keyup", captureSelection);
+    return () => {
+      window.document.removeEventListener("mouseup", captureSelection);
+      window.removeEventListener("keyup", captureSelection);
+    };
+  }, [captureSelection, isEditing]);
+
+  const selectAnnotation = (annotationId: string, options: { scroll?: boolean } = {}) => {
     setIsSidebarOpen(true);
+    void reloadCodexLink();
     review.setSelectedAnnotationId(annotationId);
+    if (options.scroll === false) {
+      return;
+    }
     const annotation = annotations.find((item) => item.id === annotationId);
     const container = contentRef.current;
     if (annotation && container) {
@@ -172,7 +371,7 @@ export function AnnotationWorkspace({
   };
 
   const cancelEdit = () => {
-    if (isDirty && !window.confirm("当前有未保存修改，确定放弃吗？")) {
+    if (isDirty && !window.confirm(t("document.unsavedConfirm"))) {
       return;
     }
 
@@ -200,7 +399,7 @@ export function AnnotationWorkspace({
       const response = await saveDocument({
         content: editorDraft,
         baseContentHash: editorBaseHash
-      });
+      }, document.absolutePath);
       review.replaceReview(response.review);
       onDocumentChange(response.document);
       setEditorDraft(response.document.content);
@@ -208,13 +407,13 @@ export function AnnotationWorkspace({
       setEditorBaseHash(response.document.contentHash);
       pendingReadingAnchorRef.current = returnAnchor;
       setIsEditing(false);
-      setFeedback("保存成功");
+      setFeedback(t("document.saved"));
     } catch (error) {
-      setEditorError(error instanceof Error ? error.message : "保存失败");
+      setEditorError(error instanceof Error ? error.message : t("document.saveFailed"));
     } finally {
       setIsSaving(false);
     }
-  }, [editorBaseHash, editorDraft, isDirty, isSaving, onDocumentChange, review]);
+  }, [document.absolutePath, editorBaseHash, editorDraft, isDirty, isSaving, onDocumentChange, review, t]);
 
   useLayoutEffect(() => {
     if (!isEditing) {
@@ -291,7 +490,10 @@ export function AnnotationWorkspace({
         endOffset: to,
         selectedText,
         prefix: editorDraft.slice(Math.max(0, from - 40), from),
-        suffix: editorDraft.slice(to, to + 40)
+        suffix: editorDraft.slice(to, to + 40),
+        originalSelectedText: selectedText,
+        markdownOffset: from,
+        anchorPrecision: "exact"
       }
     });
   };
@@ -307,19 +509,19 @@ export function AnnotationWorkspace({
         const response = await saveDocument({
           content: editorDraft,
           baseContentHash: editorBaseHash
-        });
+        }, document.absolutePath);
         review.replaceReview(response.review);
         onDocumentChange(response.document);
         setEditorDraft(response.document.content);
         setEditorBaseContent(response.document.content);
         setEditorBaseHash(response.document.contentHash);
-        setFeedback("已保存并添加批注");
+        setFeedback(t("document.savedWithAnnotation"));
       }
 
       await review.create({ body, anchor: editorAnnotationDraft.anchor });
       setEditorAnnotationDraft(null);
     } catch (error) {
-      setEditorError(error instanceof Error ? error.message : "添加批注失败");
+      setEditorError(error instanceof Error ? error.message : t("document.annotationFailed"));
     } finally {
       setIsSaving(false);
     }
@@ -330,16 +532,17 @@ export function AnnotationWorkspace({
       kind: "document",
       headingId: null,
       headingText: null,
-      selectedText: ""
+      selectedText: "",
+      anchorPrecision: "heading"
     };
     await review.create({ body, anchor });
     setIsSidebarOpen(true);
-    setFeedback("已添加全文批注");
+    setFeedback(t("document.documentAnnotationAdded"));
   };
 
   const toggleAutoMonitor = async (enabled: boolean) => {
     if (enabled && !codexLink?.connection.hasTarget) {
-      setFeedback("请先连接来源或接续对话");
+      setFeedback(t("toast.needCodexBinding"));
       return;
     }
 
@@ -348,39 +551,52 @@ export function AnnotationWorkspace({
         bridge: {
           autoSendNewAnnotations: enabled
         }
-      });
+      }, document.absolutePath);
       setCodexLink(response);
       setCodexLinkError(null);
-      setFeedback(enabled ? "自动监控已开启" : "自动监控已关闭");
+      setFeedback(enabled ? t("toast.autoMonitorOn") : t("toast.autoMonitorOff"));
     } catch (error) {
-      setCodexLinkError(error instanceof Error ? error.message : "自动监控更新失败");
+      setCodexLinkError(error instanceof Error ? error.message : t("document.autoMonitorUpdateFailed"));
     }
   };
 
   const copySuccessorConnectionInstruction = async () => {
     try {
-      const response = await createSuccessorInstruction();
+      const response = await createSuccessorInstruction(document.absolutePath);
       await copyText(response.instruction);
-      setFeedback("指令复制成功，粘贴到目标会话发送给 Codex 即可重连");
+      setFeedback(t("toast.copyReconnect"));
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "复制接续指令失败");
+      setFeedback(error instanceof Error ? error.message : t("document.copyInstructionFailed"));
     }
   };
 
   const sendAnnotation = async (annotationId: string) => {
-    const response = await sendAnnotationToCodex(annotationId);
+    const response = await sendAnnotationToCodex(annotationId, document.absolutePath);
     review.replaceReview(response.review);
     if (response.needsBinding) {
-      setFeedback("请先连接来源或接续对话");
+      setFeedback(t("toast.needCodexBinding"));
       return;
     }
-    setFeedback(response.ok ? "已加入 Codex 队列" : "投递失败，已保留重试入口");
+    setFeedback(response.ok ? t("toast.codexQueued") : t("toast.codexFailed"));
   };
 
   const retryEvent = async (eventId: string) => {
-    const response = await retryReviewEvent(eventId);
+    const response = await retryReviewEvent(eventId, document.absolutePath);
     review.replaceReview(response.review);
-    setFeedback(response.ok ? "已重新加入 Codex 队列" : "重试失败，稍后可再试");
+    setFeedback(response.ok ? t("toast.codexRetryQueued") : t("toast.codexRetryFailed"));
+  };
+
+  const toggleAnnotationSidebar = () => {
+    const nextOpen = !isSidebarOpen;
+    setIsSidebarOpen(nextOpen);
+    if (nextOpen) {
+      void reloadCodexLink();
+    }
+  };
+
+  const reloadReviewAndCodexLink = () => {
+    void review.reload();
+    void reloadCodexLink();
   };
 
   return (
@@ -389,7 +605,7 @@ export function AnnotationWorkspace({
         isEditing ? " review-layout-editing" : ""
       }`}
     >
-      <div className="document-action-dock" aria-label="文档操作">
+      <div className="document-action-dock" aria-label={t("document.actions")}>
         {isEditing ? (
           <>
             <button
@@ -397,36 +613,36 @@ export function AnnotationWorkspace({
               className={`document-action-button document-action-save${
                 isDirty ? " document-action-save-dirty" : ""
               }`}
-              aria-label={isSaving ? "保存中" : isDirty ? "保存修改" : "已保存"}
-              title={isSaving ? "保存中" : isDirty ? "保存修改" : "已保存"}
+              aria-label={isSaving ? t("document.saving") : isDirty ? t("document.save") : t("document.saved")}
+              title={isSaving ? t("document.saving") : isDirty ? t("document.save") : t("document.saved")}
               disabled={!isDirty || isSaving}
               onClick={saveEdit}
             >
               <Save size={16} />
-              <span>{isSaving ? "保存中" : "保存"}</span>
+              <span>{isSaving ? t("document.saving") : t("document.save")}</span>
             </button>
             <button
               type="button"
               className="document-action-button"
-              aria-label="退出编辑"
-              title="退出编辑"
+              aria-label={t("document.exit")}
+              title={t("document.exit")}
               disabled={isSaving}
               onClick={cancelEdit}
             >
               <X size={16} />
-              <span>退出</span>
+              <span>{t("document.exit")}</span>
             </button>
           </>
         ) : (
           <button
             type="button"
             className="document-action-button"
-            aria-label="编辑文档"
-            title="编辑文档"
+            aria-label={t("document.edit")}
+            title={t("document.edit")}
             onClick={enterEditMode}
           >
             <FilePenLine size={16} />
-            <span>编辑</span>
+            <span>{t("document.edit")}</span>
           </button>
         )}
         <button
@@ -434,10 +650,10 @@ export function AnnotationWorkspace({
           className={`document-action-button document-action-button-icon${
             isSidebarOpen ? " document-action-button-active" : ""
           }`}
-          aria-label={isSidebarOpen ? "收起批注列表" : "打开批注列表"}
+          aria-label={isSidebarOpen ? t("document.closeAnnotations") : t("document.openAnnotations")}
           aria-expanded={isSidebarOpen}
-          title={isSidebarOpen ? "收起批注列表" : "打开批注列表"}
-          onClick={() => setIsSidebarOpen((current) => !current)}
+          title={isSidebarOpen ? t("document.closeAnnotations") : t("document.openAnnotations")}
+          onClick={toggleAnnotationSidebar}
         >
           <MessageSquareText size={17} />
           {annotations.length > 0 ? <span>{annotations.length}</span> : null}
@@ -454,7 +670,7 @@ export function AnnotationWorkspace({
             <Suspense
               fallback={
                 <div className="markdown-source-editor markdown-source-editor-loading">
-                  Loading editor...
+                  {t("document.editorLoading")}
                 </div>
               }
             >
@@ -472,12 +688,7 @@ export function AnnotationWorkspace({
             />
           </section>
         ) : (
-          <section
-            className="review-document-surface"
-            ref={contentRef}
-            onMouseUp={captureSelection}
-            onKeyUp={captureSelection}
-          >
+          <section className="review-document-surface" ref={contentRef}>
             <DocumentViewer document={document} />
             <AnnotationLayer
               annotations={annotations}
@@ -487,6 +698,7 @@ export function AnnotationWorkspace({
             />
             <AnnotationSelectionToolbar
               draft={draft}
+              trackSelection
               onCancel={() => setDraft(null)}
               onCreate={async (body) => {
                 if (!draft) {
@@ -520,7 +732,7 @@ export function AnnotationWorkspace({
           onCopySuccessorInstruction={copySuccessorConnectionInstruction}
           onSendToCodex={sendAnnotation}
           onRetryReviewEvent={retryEvent}
-          onReload={review.reload}
+          onReload={reloadReviewAndCodexLink}
         />
       ) : null}
     </div>

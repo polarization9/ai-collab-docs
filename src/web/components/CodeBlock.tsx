@@ -1,5 +1,6 @@
 import { ClipboardCopy } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useI18n } from "../i18n";
 import { copyText } from "../utils/clipboard";
 
 export type CodeBlockAction = {
@@ -23,6 +24,7 @@ export function CodeBlock({
   reviewBlockProps,
   extraActions = []
 }: CodeBlockProps) {
+  const { t } = useI18n();
   const [feedback, setFeedback] = useState<string | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
 
@@ -47,16 +49,16 @@ export function CodeBlock({
       await action();
       showFeedback(message);
     } catch (error) {
-      showFeedback(error instanceof Error ? error.message : "Action failed");
+      showFeedback(error instanceof Error ? error.message : t("code.actionFailed"));
     }
   };
 
   return (
     <div className="code-block-shell">
-      <div className="code-block-toolbar" aria-label="代码块工具">
+      <div className="code-block-toolbar" aria-label={t("code.toolbar")}>
         <CodeBlockButton
-          label="复制代码"
-          onClick={() => runAction("复制成功", () => copyText(code))}
+          label={t("code.copy")}
+          onClick={() => runAction(t("code.copied"), () => copyText(code))}
         >
           <ClipboardCopy size={15} />
         </CodeBlockButton>

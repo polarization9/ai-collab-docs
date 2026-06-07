@@ -6,6 +6,10 @@ import type {
   ReviewSession
 } from "../shared/types";
 import type {
+  AppSettings,
+  RecentDocument
+} from "../shared/appSettingsTypes";
+import type {
   CodexLinkResponse,
   SuccessorInstructionResponse,
   UpdateCodexLinkRequest
@@ -28,8 +32,8 @@ import type {
   UpdateReplyRequest
 } from "../shared/reviewTypes";
 
-export async function fetchDocument(): Promise<ReviewDocument> {
-  const response = await fetch("/api/document", {
+export async function fetchDocument(documentPath?: string): Promise<ReviewDocument> {
+  const response = await fetch(withDocumentPath("/api/document", documentPath), {
     headers: getApiHeaders(false)
   });
 
@@ -47,12 +51,56 @@ export async function fetchDocument(): Promise<ReviewDocument> {
   return (await response.json()) as ReviewDocument;
 }
 
+export async function fetchDocumentAssetObjectUrl(
+  src: string,
+  documentPath: string
+): Promise<string> {
+  const response = await fetch(
+    withDocumentPath(`/api/document-asset?src=${encodeURIComponent(src)}`, documentPath),
+    {
+      headers: getApiHeaders(false)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response));
+  }
+
+  return URL.createObjectURL(await response.blob());
+}
+
 export async function fetchSession(): Promise<ReviewSession> {
   return requestJson<ReviewSession>("/api/session");
 }
 
 export async function fetchBootstrap(): Promise<ReviewBootstrap> {
   return requestJson<ReviewBootstrap>("/api/bootstrap");
+}
+
+export async function fetchAppSettings(): Promise<AppSettings> {
+  return requestJson<AppSettings>("/api/app/settings");
+}
+
+export async function updateAppSettings(
+  settings: Partial<AppSettings>
+): Promise<AppSettings> {
+  return requestJson<AppSettings>("/api/app/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings)
+  });
+}
+
+export async function fetchRecentDocuments(): Promise<RecentDocument[]> {
+  return requestJson<RecentDocument[]>("/api/recent-documents");
+}
+
+export async function removeRecentDocument(path: string): Promise<RecentDocument[]> {
+  return requestJson<RecentDocument[]>(
+    `/api/recent-documents?path=${encodeURIComponent(path)}`,
+    {
+      method: "DELETE"
+    }
+  );
 }
 
 export async function openDocument(request: OpenDocumentRequest): Promise<ReviewDocument> {
@@ -68,38 +116,57 @@ export async function pickDocumentOnServer(): Promise<ReviewDocument> {
   });
 }
 
-export async function fetchReview(): Promise<ReviewFile> {
-  return requestJson<ReviewFile>("/api/review");
+export async function fetchReview(documentPath?: string): Promise<ReviewFile> {
+  return requestJson<ReviewFile>(withDocumentPath("/api/review", documentPath));
 }
 
-export async function fetchCodexLink(): Promise<CodexLinkResponse> {
-  return requestJson<CodexLinkResponse>("/api/codex-link");
+export async function fetchCodexLink(documentPath?: string): Promise<CodexLinkResponse> {
+  return requestJson<CodexLinkResponse>(withDocumentPath("/api/codex-link", documentPath));
 }
 
 export async function updateCodexLink(
-  request: UpdateCodexLinkRequest
+  request: UpdateCodexLinkRequest,
+  documentPath?: string
 ): Promise<CodexLinkResponse> {
-  return requestJson<CodexLinkResponse>("/api/codex-link", {
+  return requestJson<CodexLinkResponse>(withDocumentPath("/api/codex-link", documentPath), {
     method: "PUT",
     body: JSON.stringify(request)
   });
 }
 
-export async function createSuccessorInstruction(): Promise<SuccessorInstructionResponse> {
-  return requestJson<SuccessorInstructionResponse>("/api/codex-link/successor-instruction", {
-    method: "POST"
+export async function createSuccessorInstruction(
+  documentPath?: string
+): Promise<SuccessorInstructionResponse> {
+  return requestJson<SuccessorInstructionResponse>(
+    withDocumentPath("/api/codex-link/successor-instruction", documentPath),
+    {
+      method: "POST"
+    }
+  );
+}
+
+export async function copyTextToSystemClipboard(text: string): Promise<void> {
+  await requestJson<{ ok: boolean }>("/api/clipboard/text", {
+    method: "POST",
+    body: JSON.stringify({ text })
   });
 }
 
-export async function saveDocument(request: SaveDocumentRequest): Promise<SaveDocumentResponse> {
-  return requestJson<SaveDocumentResponse>("/api/document", {
+export async function saveDocument(
+  request: SaveDocumentRequest,
+  documentPath?: string
+): Promise<SaveDocumentResponse> {
+  return requestJson<SaveDocumentResponse>(withDocumentPath("/api/document", documentPath), {
     method: "PUT",
     body: JSON.stringify(request)
   });
 }
 
-export async function createAnnotation(request: CreateAnnotationRequest): Promise<ReviewFile> {
-  return requestJson<ReviewFile>("/api/review/annotations", {
+export async function createAnnotation(
+  request: CreateAnnotationRequest,
+  documentPath?: string
+): Promise<ReviewFile> {
+  return requestJson<ReviewFile>(withDocumentPath("/api/review/annotations", documentPath), {
     method: "POST",
     body: JSON.stringify(request)
   });
@@ -107,26 +174,34 @@ export async function createAnnotation(request: CreateAnnotationRequest): Promis
 
 export async function addAnnotationReply(
   annotationId: string,
-  request: AddReplyRequest
+  request: AddReplyRequest,
+  documentPath?: string
 ): Promise<ReviewFile> {
-  return requestJson<ReviewFile>(`/api/review/annotations/${annotationId}/replies`, {
-    method: "POST",
-    body: JSON.stringify(request)
-  });
+  return requestJson<ReviewFile>(
+    withDocumentPath(`/api/review/annotations/${annotationId}/replies`, documentPath),
+    {
+      method: "POST",
+      body: JSON.stringify(request)
+    }
+  );
 }
 
 export async function updateAnnotation(
   annotationId: string,
-  request: UpdateAnnotationRequest
+  request: UpdateAnnotationRequest,
+  documentPath?: string
 ): Promise<ReviewFile> {
-  return requestJson<ReviewFile>(`/api/review/annotations/${annotationId}`, {
+  return requestJson<ReviewFile>(withDocumentPath(`/api/review/annotations/${annotationId}`, documentPath), {
     method: "PATCH",
     body: JSON.stringify(request)
   });
 }
 
-export async function deleteAnnotation(annotationId: string): Promise<ReviewFile> {
-  return requestJson<ReviewFile>(`/api/review/annotations/${annotationId}`, {
+export async function deleteAnnotation(
+  annotationId: string,
+  documentPath?: string
+): Promise<ReviewFile> {
+  return requestJson<ReviewFile>(withDocumentPath(`/api/review/annotations/${annotationId}`, documentPath), {
     method: "DELETE"
   });
 }
@@ -134,31 +209,45 @@ export async function deleteAnnotation(annotationId: string): Promise<ReviewFile
 export async function updateAnnotationReply(
   annotationId: string,
   replyId: string,
-  request: UpdateReplyRequest
+  request: UpdateReplyRequest,
+  documentPath?: string
 ): Promise<ReviewFile> {
-  return requestJson<ReviewFile>(`/api/review/annotations/${annotationId}/replies/${replyId}`, {
-    method: "PATCH",
-    body: JSON.stringify(request)
-  });
+  return requestJson<ReviewFile>(
+    withDocumentPath(`/api/review/annotations/${annotationId}/replies/${replyId}`, documentPath),
+    {
+      method: "PATCH",
+      body: JSON.stringify(request)
+    }
+  );
 }
 
 export async function updateAnnotationStatus(
   annotationId: string,
-  request: UpdateAnnotationStatusRequest
+  request: UpdateAnnotationStatusRequest,
+  documentPath?: string
 ): Promise<ReviewFile> {
-  return requestJson<ReviewFile>(`/api/review/annotations/${annotationId}/status`, {
-    method: "PATCH",
-    body: JSON.stringify(request)
-  });
+  return requestJson<ReviewFile>(
+    withDocumentPath(`/api/review/annotations/${annotationId}/status`, documentPath),
+    {
+      method: "PATCH",
+      body: JSON.stringify(request)
+    }
+  );
 }
 
-export async function fetchAnnotationContext(annotationId: string): Promise<AnnotationContext> {
-  return requestJson<AnnotationContext>(`/api/review/annotations/${annotationId}/context`);
+export async function fetchAnnotationContext(
+  annotationId: string,
+  documentPath?: string
+): Promise<AnnotationContext> {
+  return requestJson<AnnotationContext>(
+    withDocumentPath(`/api/review/annotations/${annotationId}/context`, documentPath)
+  );
 }
 
 export async function fetchReviewEvents(filter: {
   status?: ReviewEventDeliveryStatus;
   annotationId?: string;
+  documentPath?: string;
 } = {}): Promise<ReviewEvent[]> {
   const params = new URLSearchParams();
   if (filter.status) {
@@ -167,35 +256,55 @@ export async function fetchReviewEvents(filter: {
   if (filter.annotationId) {
     params.set("annotationId", filter.annotationId);
   }
+  if (filter.documentPath) {
+    params.set("documentPath", filter.documentPath);
+  }
   const query = params.toString();
   return requestJson<ReviewEvent[]>(`/api/review-events${query ? `?${query}` : ""}`);
 }
 
 export async function updateReviewEvent(
   eventId: string,
-  request: UpdateReviewEventRequest
+  request: UpdateReviewEventRequest,
+  documentPath?: string
 ): Promise<ReviewFile> {
-  return requestJson<ReviewFile>(`/api/review-events/${eventId}`, {
+  return requestJson<ReviewFile>(withDocumentPath(`/api/review-events/${eventId}`, documentPath), {
     method: "PATCH",
     body: JSON.stringify(request)
   });
 }
 
 export async function sendAnnotationToCodex(
-  annotationId: string
+  annotationId: string,
+  documentPath?: string
 ): Promise<BridgeSendAnnotationResponse> {
   return requestJson<BridgeSendAnnotationResponse>(
-    `/api/bridge/annotations/${annotationId}/send`,
+    withDocumentPath(`/api/bridge/annotations/${annotationId}/send`, documentPath),
     {
       method: "POST"
     }
   );
 }
 
-export async function retryReviewEvent(eventId: string): Promise<BridgeSendAnnotationResponse> {
-  return requestJson<BridgeSendAnnotationResponse>(`/api/bridge/events/${eventId}/retry`, {
-    method: "POST"
-  });
+export async function retryReviewEvent(
+  eventId: string,
+  documentPath?: string
+): Promise<BridgeSendAnnotationResponse> {
+  return requestJson<BridgeSendAnnotationResponse>(
+    withDocumentPath(`/api/bridge/events/${eventId}/retry`, documentPath),
+    {
+      method: "POST"
+    }
+  );
+}
+
+function withDocumentPath(url: string, documentPath?: string): string {
+  if (!documentPath) {
+    return url;
+  }
+
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}documentPath=${encodeURIComponent(documentPath)}`;
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -223,7 +332,7 @@ function getApiHeaders(
   }
 
   if (desktopToken) {
-    apiHeaders["X-AI-MD-Reviewer-Token"] = desktopToken;
+    apiHeaders["X-Margent-Token"] = desktopToken;
   }
 
   return {
@@ -237,7 +346,7 @@ function getDesktopToken(): string | null {
     return null;
   }
 
-  const existing = window.sessionStorage.getItem("ai-md-reviewer-token");
+  const existing = window.sessionStorage.getItem("margent-token");
   if (existing) {
     return existing;
   }
@@ -247,7 +356,7 @@ function getDesktopToken(): string | null {
     return null;
   }
 
-  window.sessionStorage.setItem("ai-md-reviewer-token", token);
+  window.sessionStorage.setItem("margent-token", token);
   const url = new URL(window.location.href);
   url.searchParams.delete("desktopToken");
   window.history.replaceState(null, "", url);

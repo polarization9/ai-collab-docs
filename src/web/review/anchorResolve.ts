@@ -22,32 +22,40 @@ export function resolveAnnotation(
     return mermaid ? { element: mermaid, range: null } : resolveHeading(anchor, container);
   }
 
-  const block = findBlock(anchor.blockId, container);
-  if (!block) {
-    return resolveByText(anchor.selectedText, container) ?? resolveHeading(anchor, container);
+  if (anchor.kind === "range") {
+    const rangeResolved = resolveRangeAnchor(anchor, container);
+    if (rangeResolved) {
+      return rangeResolved;
+    }
   }
 
-  if (anchor.kind === "block") {
+  const textResolved = resolveByTextFirst(anchor, container);
+  if (textResolved) {
+    return textResolved;
+  }
+
+  const block = findBlock(anchor.blockId, container);
+  if (block && isTrustworthyBlockFallback(anchor, block)) {
+    if (anchor.kind === "text") {
+      const directRange = createRangeFromOffsets(block, anchor.startOffset, anchor.endOffset);
+      if (directRange && rangeMatches(directRange, anchor.selectedText)) {
+        return { element: block, range: directRange };
+      }
+    }
     return { element: block, range: null };
   }
 
-  const directRange = createRangeFromOffsets(block, anchor.startOffset, anchor.endOffset);
-  if (directRange && rangeMatches(directRange, anchor.selectedText)) {
-    return { element: block, range: directRange };
-  }
-
-  const textRange = createRangeFromTextCandidates(block, anchor.selectedText);
-  if (textRange) {
-    return { element: block, range: textRange };
-  }
-
-  return { element: block, range: null };
+  return resolveHeading(anchor, container);
 }
 
 export function getAnnotationRects(
   annotation: ReviewAnnotation,
   container: HTMLElement
 ): Array<DOMRect> {
+  if (annotation.anchor.kind === "range") {
+    return getRangeAnchorTextRects(annotation.anchor, container);
+  }
+
   const resolved = resolveAnnotation(annotation, container);
   if (!resolved) {
     return [];
@@ -82,6 +90,132 @@ function findBlock(blockId: string, container: HTMLElement): HTMLElement | null 
   );
 }
 
+function resolveRangeAnchor(
+  anchor: Extract<ReviewAnchor, { kind: "range" }>,
+  container: HTMLElement
+): ResolvedAnnotation | null {
+  const startBlock = findBlock(anchor.startBlockId, container);
+  const endBlock = findBlock(anchor.endBlockId, container);
+  if (!startBlock || !endBlock || !isDomOrderValid(startBlock, endBlock)) {
+    return null;
+  }
+
+  const startBoundary = getTextBoundary(startBlock, anchor.startOffset);
+  const endBoundary = getTextBoundary(endBlock, anchor.endOffset);
+  if (!startBoundary || !endBoundary) {
+    return null;
+  }
+
+  const range = document.createRange();
+  range.setStart(startBoundary.node, startBoundary.offset);
+  range.setEnd(endBoundary.node, endBoundary.offset);
+  if (range.collapsed || !rangeMatches(range, anchor.selectedText)) {
+    range.detach();
+    return null;
+  }
+
+  return {
+    element: startBlock,
+    range
+  };
+}
+
+function getRangeAnchorTextRects(
+  anchor: Extract<ReviewAnchor, { kind: "range" }>,
+  container: HTMLElement
+): DOMRect[] {
+  const blocks = Array.from(container.querySelectorAll<HTMLElement>("[data-review-block-id]"));
+  const startIndex = blocks.findIndex(
+    (block) => block.dataset.reviewBlockId === anchor.startBlockId
+  );
+  const endIndex = blocks.findIndex((block) => block.dataset.reviewBlockId === anchor.endBlockId);
+  if (startIndex < 0 || endIndex < 0 || startIndex > endIndex) {
+    return [];
+  }
+
+  return blocks
+    .slice(startIndex, endIndex + 1)
+    .flatMap((block, localIndex, selectedBlocks) => {
+      const isStartBlock = localIndex === 0;
+      const isEndBlock = localIndex === selectedBlocks.length - 1;
+      return getTextNodeRects(
+        block,
+        isStartBlock ? anchor.startOffset : 0,
+        isEndBlock ? anchor.endOffset : (block.textContent ?? "").length
+      );
+    });
+}
+
+function getTextNodeRects(root: HTMLElement, startOffset: number, endOffset: number): DOMRect[] {
+  const normalizedStart = Math.max(0, Math.min(startOffset, endOffset));
+  const normalizedEnd = Math.max(normalizedStart, endOffset);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const rects: DOMRect[] = [];
+  let currentOffset = 0;
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const textLength = node.textContent?.length ?? 0;
+    const nextOffset = currentOffset + textLength;
+    const segmentStart = Math.max(normalizedStart, currentOffset);
+    const segmentEnd = Math.min(normalizedEnd, nextOffset);
+
+    if (segmentStart < segmentEnd) {
+      const range = document.createRange();
+      range.setStart(node, segmentStart - currentOffset);
+      range.setEnd(node, segmentEnd - currentOffset);
+      rects.push(
+        ...Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0)
+      );
+      range.detach();
+    }
+
+    currentOffset = nextOffset;
+    if (currentOffset >= normalizedEnd) {
+      break;
+    }
+  }
+
+  return rects;
+}
+
+function isDomOrderValid(start: HTMLElement, end: HTMLElement): boolean {
+  if (start === end) {
+    return true;
+  }
+  return Boolean(start.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+function getTextBoundary(root: HTMLElement, offset: number): { node: Text; offset: number } | null {
+  const targetOffset = Math.max(0, Math.min(offset, root.textContent?.length ?? 0));
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let currentOffset = 0;
+  let lastTextNode: Text | null = null;
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const textLength = node.textContent?.length ?? 0;
+    const nextOffset = currentOffset + textLength;
+    lastTextNode = node;
+
+    if (targetOffset <= nextOffset) {
+      return {
+        node,
+        offset: targetOffset - currentOffset
+      };
+    }
+
+    currentOffset = nextOffset;
+  }
+
+  return lastTextNode
+    ? {
+        node: lastTextNode,
+        offset: lastTextNode.textContent?.length ?? 0
+      }
+    : null;
+}
+
 function resolveByText(text: string, container: HTMLElement): ResolvedAnnotation | null {
   if (!text) {
     return null;
@@ -95,6 +229,156 @@ function resolveByText(text: string, container: HTMLElement): ResolvedAnnotation
   }
 
   return null;
+}
+
+function resolveByTextFirst(anchor: ReviewAnchor, container: HTMLElement): ResolvedAnnotation | null {
+  const candidates = scoreDomCandidates(findDomCandidates(anchor, container), anchor);
+  const [best, second] = candidates;
+  if (!best) {
+    return null;
+  }
+
+  if (!second || best.score - second.score >= 12 || best.score >= 70) {
+    return {
+      element: best.element,
+      range: best.range
+    };
+  }
+
+  return null;
+}
+
+type DomCandidate = {
+  element: HTMLElement;
+  range: Range;
+  source: "selected" | "original";
+  score: number;
+};
+
+function findDomCandidates(anchor: ReviewAnchor, container: HTMLElement): DomCandidate[] {
+  const blocks = Array.from(container.querySelectorAll<HTMLElement>("[data-review-block-id]"));
+  const scopedBlocks = getHeadingScopedBlocks(blocks, anchor);
+  const searchBlocks = scopedBlocks.length > 0 ? scopedBlocks : blocks;
+  const texts = getAnchorTexts(anchor);
+  const candidates: DomCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const text of texts) {
+    for (const block of searchBlocks) {
+      const range = createRangeFromTextCandidates(block, text.value);
+      if (!range) {
+        continue;
+      }
+      const key = `${block.dataset.reviewBlockId}:${range.startOffset}:${range.endOffset}:${text.source}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      candidates.push({
+        element: block,
+        range,
+        source: text.source,
+        score: 0
+      });
+    }
+  }
+
+  if (scopedBlocks.length > 0) {
+    return candidates;
+  }
+
+  return candidates;
+}
+
+function scoreDomCandidates(candidates: DomCandidate[], anchor: ReviewAnchor): DomCandidate[] {
+  return candidates
+    .map((candidate) => {
+      let score = candidate.source === "selected" ? 45 : 34;
+
+      if (anchor.headingId && candidate.element.dataset.reviewHeadingId === anchor.headingId) {
+        score += 18;
+      } else if (
+        anchor.headingText &&
+        candidate.element.dataset.reviewHeadingText === anchor.headingText
+      ) {
+        score += 14;
+      }
+
+      if ("blockId" in anchor && candidate.element.dataset.reviewBlockId === anchor.blockId) {
+        score += 10;
+      }
+
+      if (
+        anchor.blockFingerprint?.kind &&
+        candidate.element.dataset.reviewBlockKind === anchor.blockFingerprint.kind
+      ) {
+        score += 8;
+      }
+
+      if (anchor.kind === "text") {
+        const blockText = candidate.element.textContent ?? "";
+        const prefix = normalizeText(anchor.prefix);
+        const suffix = normalizeText(anchor.suffix);
+        if (prefix && normalizeText(blockText).includes(prefix)) {
+          score += 12;
+        }
+        if (suffix && normalizeText(blockText).includes(suffix)) {
+          score += 12;
+        }
+      }
+
+      return { ...candidate, score };
+    })
+    .sort((left, right) => right.score - left.score);
+}
+
+function getHeadingScopedBlocks(blocks: HTMLElement[], anchor: ReviewAnchor): HTMLElement[] {
+  if (!anchor.headingId && !anchor.headingText) {
+    return [];
+  }
+  return blocks.filter(
+    (block) =>
+      (anchor.headingId && block.dataset.reviewHeadingId === anchor.headingId) ||
+      (anchor.headingText && block.dataset.reviewHeadingText === anchor.headingText)
+  );
+}
+
+function getAnchorTexts(anchor: ReviewAnchor): Array<{ value: string; source: "selected" | "original" }> {
+  const texts: Array<{ value: string; source: "selected" | "original" }> = [];
+  if (anchor.selectedText?.trim()) {
+    texts.push({ value: anchor.selectedText.trim(), source: "selected" });
+  }
+  if (anchor.originalSelectedText?.trim() && anchor.originalSelectedText !== anchor.selectedText) {
+    texts.push({ value: anchor.originalSelectedText.trim(), source: "original" });
+  }
+  return texts;
+}
+
+function isTrustworthyBlockFallback(anchor: ReviewAnchor, block: HTMLElement): boolean {
+  if (anchor.kind === "range") {
+    return false;
+  }
+  if (anchor.anchorPrecision === "heading" || anchor.anchorPrecision === "unknown") {
+    return false;
+  }
+
+  const blockText = normalizeText(block.textContent ?? "");
+  const selectedText = normalizeText(anchor.selectedText ?? "");
+  const originalSelectedText = normalizeText(anchor.originalSelectedText ?? "");
+  if (selectedText && blockText.includes(selectedText)) {
+    return true;
+  }
+  if (originalSelectedText && blockText.includes(originalSelectedText)) {
+    return true;
+  }
+
+  if (anchor.kind === "text") {
+    const prefix = normalizeText(anchor.prefix);
+    const suffix = normalizeText(anchor.suffix);
+    return Boolean((prefix && blockText.includes(prefix)) || (suffix && blockText.includes(suffix)));
+  }
+
+  return false;
 }
 
 function resolveHeading(anchor: ReviewAnchor, container: HTMLElement): ResolvedAnnotation | null {

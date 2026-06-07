@@ -10,13 +10,16 @@ type McpCliOptions = {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
 
-  if (options.help || !options.markdownPath) {
+  if (options.help) {
     printUsage();
-    process.exit(options.help ? 0 : 1);
+    process.exit(0);
   }
 
-  const markdownPath = resolveMarkdownPath(options.markdownPath);
-  assertReadableMarkdownFile(markdownPath);
+  const markdownPath = options.markdownPath ? resolveMarkdownPath(options.markdownPath) : undefined;
+  if (markdownPath) {
+    assertReadableMarkdownFile(markdownPath);
+  }
+
   await startReviewerMcpServer({ markdownPath });
 }
 
@@ -43,7 +46,7 @@ function parseArgs(args: string[]): McpCliOptions {
 }
 
 function printUsage(): void {
-  console.error("Usage: ai-md-reviewer-mcp <markdown-file>");
+  console.error("Usage: margent-mcp [markdown-file]");
 }
 
 main().catch((error: unknown) => {
