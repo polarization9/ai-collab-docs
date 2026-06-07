@@ -115,6 +115,18 @@ docs/Margent Codex 初始化指南.md
 
 If Codex cannot see Margent MCP or reviewer tools, it should say that the collaboration channel is not connected instead of pretending it can process annotations.
 
+## Adoption Metrics
+
+Margent currently uses GitHub Release asset download counts as its public adoption signal. The app does not collect DAU, document metadata, file paths, annotation content, or in-app telemetry.
+
+To inspect release downloads:
+
+```bash
+node scripts/report-release-downloads.mjs
+```
+
+This script reads GitHub Release asset `download_count` values through the GitHub CLI. It does not collect data from installed apps.
+
 ## Verification
 
 Useful checks while developing:
