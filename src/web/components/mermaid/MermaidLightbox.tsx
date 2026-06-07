@@ -456,11 +456,11 @@ export function MermaidLightbox({
             />
           ) : null}
           <div className="mermaid-lightbox-hint">
-            Pinch to zoom · Scroll or drag to pan · Double-click or R to reset
+            {t("mermaid.lightboxHint")}
           </div>
           <form
             className="mermaid-zoom-indicator"
-            aria-label="Custom zoom percentage"
+            aria-label={t("mermaid.customZoomPercentage")}
             onSubmit={(event) => {
               event.preventDefault();
               commitZoomInput();
@@ -472,7 +472,7 @@ export function MermaidLightbox({
           >
             <input
               ref={zoomInputRef}
-              aria-label="Zoom percentage"
+              aria-label={t("mermaid.zoomPercentage")}
               inputMode="numeric"
               maxLength={3}
               pattern="[0-9]*"

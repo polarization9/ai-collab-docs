@@ -469,6 +469,13 @@ type RecentDocument = {
 - CLI 和桌面 App 共享同一份 JSON。
 - 文件不存在时保留记录，但 UI 显示轻量状态。
 
+首次体验：
+
+- App bundle 内置 `examples/Margent Quickstart.md`。
+- 第一次读取最近文件时，如果尚未初始化 Quickstart，则复制到 `~/Documents/Margent/Margent Quickstart.md`。
+- 复制成功后把 Quickstart 写入最近文件列表。
+- 初始化状态写入 app data，用户删除示例文档或从最近文件移除后，不再自动恢复。
+
 ### 7.2 空态 UI
 
 新增 `EmptyState.tsx`：
@@ -476,7 +483,7 @@ type RecentDocument = {
 - 主操作：打开 Markdown 文件。
 - 辅助入口：最近文件。
 - 错误状态：打开失败、文件不存在。
-- 不展示“打开示例文档”。
+- 不展示独立“打开示例文档”按钮；Quickstart 示例只作为最近文件中的默认记录出现。
 
 Finder 打开速度：
 
@@ -743,7 +750,7 @@ P0 不做用户自定义色值。
 5. 改造前端 `anchorResolve.ts`，不再优先信任旧 `blockId`。
 6. 接入外部文件 watcher 和 pending refresh。
 7. 抽象 workspace documents，多文档打开 / 切换 / 关闭。
-8. 增加空态启动页和最近文件共享存储。
+8. 增加空态启动页、最近文件共享存储和 Quickstart 示例初始化。
 9. 增加 macOS 菜单栏和统一设置面板。
 10. 增加 i18n dictionary。
 11. 增加 theme token 和三套配色。

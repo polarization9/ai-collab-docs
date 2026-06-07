@@ -82,9 +82,7 @@ export default function App() {
       <I18nProvider language="system">
         <Suspense
           fallback={
-            <main className="center-state">
-              <p>Loading prototype...</p>
-            </main>
+            <PrototypeLoadingFallback />
           }
         >
           <CodexBridgePrototype />
@@ -162,6 +160,15 @@ export default function App() {
   );
 }
 
+function PrototypeLoadingFallback() {
+  const { t } = useI18n();
+  return (
+    <main className="center-state">
+      <p>{t("app.loadingPrototype")}</p>
+    </main>
+  );
+}
+
 function AppContent({
   settings,
   settingsLoaded
@@ -185,18 +192,27 @@ function AppContent({
     }
   }, []);
 
-  const openMarkdownPath = useCallback(async (path: string) => {
+  const openMarkdownPaths = useCallback(async (paths: string[]) => {
+    const documentPaths = uniqueDocumentPaths(paths);
+    if (documentPaths.length === 0) {
+      return;
+    }
+
     setState((current) => (current.status === "ready" ? current : { status: "loading" }));
+    let openedAny = false;
     try {
-      const document = await openDocument({ path });
-      const readyDocument = await tryLoadOpenDocumentState();
-      setState((current) =>
-        addOrReplaceOpenDocument(current, readyDocument ?? { document, review: null, codexLink: null })
-      );
+      for (const documentPath of documentPaths) {
+        const readyDocument = await loadOpenDocumentStateFromPath(documentPath);
+        openedAny = true;
+        setState((current) => addOrReplaceOpenDocument(current, readyDocument));
+      }
       void reloadRecentDocuments();
     } catch (error) {
+      if (openedAny) {
+        void reloadRecentDocuments();
+      }
       setState((current) =>
-        current.status === "ready"
+        current.status === "ready" || openedAny
           ? current
           : {
               status: "empty",
@@ -205,6 +221,11 @@ function AppContent({
       );
     }
   }, [reloadRecentDocuments, t]);
+
+  const openMarkdownPath = useCallback(
+    async (path: string) => openMarkdownPaths([path]),
+    [openMarkdownPaths]
+  );
 
   const openWithPicker = useCallback(async () => {
     setState((current) => (current.status === "ready" ? current : { status: "loading" }));
@@ -216,12 +237,7 @@ function AppContent({
           setState((current) => (current.status === "ready" ? current : { status: "empty" }));
           return;
         }
-        const document = await openDocument({ path });
-        const readyDocument = await tryLoadOpenDocumentState();
-        setState((current) =>
-          addOrReplaceOpenDocument(current, readyDocument ?? { document, review: null, codexLink: null })
-        );
-        void reloadRecentDocuments();
+        await openMarkdownPaths([path]);
         return;
       }
 
@@ -241,7 +257,7 @@ function AppContent({
             }
       );
     }
-  }, [reloadRecentDocuments, settings.language, t]);
+  }, [openMarkdownPaths, reloadRecentDocuments, settings.language, t]);
 
   const openSettings = useCallback(() => {
     void openSettingsWindow();
@@ -287,10 +303,26 @@ function AppContent({
     async function loadInitialDocument() {
       try {
         await reloadRecentDocuments();
-        const openedFiles = await getInitialOpenedFiles();
-        const initialPath = openedFiles[0];
-        if (initialPath) {
-          await openDocument({ path: initialPath });
+        const openedFiles = uniqueDocumentPaths(await getInitialOpenedFiles());
+        if (openedFiles.length > 0) {
+          const openedDocuments: OpenDocumentState[] = [];
+          for (const path of openedFiles) {
+            const readyDocument = await loadOpenDocumentStateFromPath(path);
+            if (cancelled) {
+              return;
+            }
+            openedDocuments.push(readyDocument);
+          }
+          if (!cancelled) {
+            setState(
+              openedDocuments.reduce<LoadState>(
+                (current, documentState) => addOrReplaceOpenDocument(current, documentState),
+                { status: "loading" }
+              ) as ReadyLoadState
+            );
+            void reloadRecentDocuments();
+          }
+          return;
         } else if (settings.startupBehavior === "restore-last-documents") {
           const recent = await fetchRecentDocuments();
           const firstExisting = recent.find((item) => item.exists);
@@ -364,10 +396,7 @@ function AppContent({
     let disposeListener: (() => void) | undefined;
 
     listenForOpenedFiles((paths) => {
-      const path = paths[0];
-      if (path) {
-        void openMarkdownPath(path);
-      }
+      void openMarkdownPaths(paths);
     }).then((dispose) => {
       if (disposed) {
         dispose();
@@ -380,7 +409,7 @@ function AppContent({
       disposed = true;
       disposeListener?.();
     };
-  }, [openMarkdownPath]);
+  }, [openMarkdownPaths]);
 
   if (state.status === "loading") {
     return (
@@ -563,6 +592,12 @@ async function tryLoadReadyStateFromBootstrap(): Promise<ReadyLoadState | null> 
   }
 }
 
+async function loadOpenDocumentStateFromPath(path: string): Promise<OpenDocumentState> {
+  const document = await openDocument({ path });
+  const readyDocument = await tryLoadOpenDocumentState();
+  return readyDocument ?? { document, review: null, codexLink: null };
+}
+
 async function tryLoadOpenDocumentState(): Promise<OpenDocumentState | null> {
   const readyState = await tryLoadReadyStateFromBootstrap();
   const active = readyState ? getActiveDocumentState(readyState) : null;
@@ -620,6 +655,20 @@ function addOrReplaceOpenDocument(
     documents,
     activeDocumentId: nextDocument.document.id
   };
+}
+
+function uniqueDocumentPaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const path of paths) {
+    const normalizedPath = path.trim();
+    if (!normalizedPath || seen.has(normalizedPath)) {
+      continue;
+    }
+    seen.add(normalizedPath);
+    unique.push(normalizedPath);
+  }
+  return unique;
 }
 
 function updateOpenDocument(

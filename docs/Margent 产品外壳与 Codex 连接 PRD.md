@@ -261,9 +261,11 @@ App 打开文档时：
 ```ts
 type ReviewEvent = {
   id: string;
-  type: "annotation_created";
+  type: "annotation_created" | "reply_followup";
   documentPath: string;
   annotationId: string;
+  triggerReplyId?: string;
+  replyToReplyId?: string;
   sourceThreadId?: string;
   targetThreadId?: string;
   targetType?: "source" | "successor";
@@ -294,6 +296,8 @@ type ReviewEvent = {
 这个开关控制的是：用户新增批注后，产品是否自动把这条批注任务投递给当前目标 Codex 会话。
 
 开启自动监控不等于产品自己理解上下文，也不等于产品自动修改正文。Margent 只负责把批注事件送到正确会话；Codex 仍通过 MCP 读取文档和批注，并在目标会话上下文中决定回复、修改正文或更新状态。
+
+用户回复 Agent / Codex 回复时，不受“新增批注自动监控”开关限制。这个动作已经表达了继续和 Codex 对话的意图，产品会自动创建 `reply_followup` 事件。普通用户回复、Agent 追加回复、用户回复用户回复不自动投递。
 
 **关闭时：Reviewer 侧体验**
 
@@ -328,11 +332,12 @@ type ReviewEvent = {
 
 **开启时：Codex 侧体验**
 
-- 目标 Codex 会话会按批注事件收到任务消息。
-- 每条批注对应一个 Codex 处理任务，不把多个新批注默认合并成一个大任务。
+- 目标 Codex 会话会按批注事件或批注追问事件收到任务消息。
+- 每条新批注或二级追问对应一个 Codex 处理任务，不把多个任务默认合并成一个大任务。
 - 如果目标是来源会话，Codex 可以使用该会话已有上下文处理批注。
 - 如果目标是接续对话，任务会明确提示“这是接续对话，不是原来源会话”；Codex 不应假设拥有历史讨论。
 - Codex 收到任务后，第一步应调用 Margent MCP 读取批注上下文，而不是依赖 prompt 中的摘要。
+- 如果事件包含 `triggerReplyId`，Codex 必须把 `context.triggerReply` 作为本轮任务焦点；父级批注、选中文本、文档上下文和历史回复只作为背景。
 - Codex 处理完成后，通过 MCP 回复批注、修改 Markdown 正文、更新批注状态，并把事件标记为 `handled`。
 - 如果处理异常，Codex 可以通过 MCP 读取事件、投递记录和内部错误信息进行分析；这些细节不作为普通用户界面的一部分展示。
 
@@ -342,7 +347,7 @@ type ReviewEvent = {
 - 事件按 `createdAt` 从早到晚进入队列。
 - 当前事件进入 `handled` 或 `failed` 后，队列才投递下一条事件。
 - 如果当前事件处于 `delivering` / `sent` / `processing`，后续事件保持 `queued`。
-- 如果用户在事件投递前编辑批注，投递时读取最新批注内容。
+- 如果用户在事件投递前编辑批注或追加回复，投递时读取最新批注上下文。
 - 如果用户在事件投递前删除批注，该事件标记为 `ignored`。
 - 如果用户在事件投递前手动标记批注为 `resolved`，事件不自动投递，除非用户再次手动发送。
 - 串行投递用于避免多个 Codex turn 同时修改同一份 Markdown，导致正文冲突或批注锚点反复修复。
@@ -399,6 +404,27 @@ Margent 有一条新的批注任务需要处理。
 - 不要要求用户把整份 Markdown 粘贴到对话里。
 - 需要正文或更多上下文时，通过 MCP 读取本地文档。
 - 如果 MCP 不可用，请回复说明无法处理，并不要假装已经完成。
+```
+
+二级追问模板在基础模板上增加触发回复：
+
+```text
+Margent 有一条新的批注追问需要处理。
+
+触发回复 ID：
+{{triggerReplyId}}
+
+1. 调用 Margent MCP 读取这条批注：
+   reviewer_get_annotation_context({
+     documentPath: "{{documentPath}}",
+     annotationId: "{{annotationId}}",
+     triggerReplyId: "{{triggerReplyId}}"
+   })
+
+2. 这是用户对 Codex 回复发起的继续回复：
+   - context.triggerReply 是本轮任务的主要用户意图。
+   - 父级批注、原始选中文本、文档局部上下文和全部历史回复用于理解背景。
+   - 不要把父级批注当成一条新的待处理问题重复处理，除非 triggerReply 明确要求重新处理。
 ```
 
 来源会话补充说明：

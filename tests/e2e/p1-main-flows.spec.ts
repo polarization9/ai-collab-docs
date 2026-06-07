@@ -6,6 +6,7 @@ import {
   textAnchor
 } from "./support/margentE2e";
 import type { ReviewDocument } from "../../src/shared/types";
+import type { ReviewFile } from "../../src/shared/reviewTypes";
 
 test("P1 reading enhancements expose TOC, code, Mermaid, table, and local images", async ({
   page
@@ -102,6 +103,63 @@ test("P1 annotation sidebar handles Codex state, agent replies, reopen, and dele
     await expect(page.getByText("P1 批注复杂状态")).toBeVisible();
     await page.getByRole("button", { name: "确认删除批注" }).click();
     await expect(page.getByText("P1 批注复杂状态")).toHaveCount(0);
+  } finally {
+    await app.cleanup();
+  }
+});
+
+test("P1 cross-block text selections create line-level range annotations", async ({
+  page,
+  request
+}, testInfo) => {
+  const app = await startMargentE2e(testInfo);
+  try {
+    await app.setSettings({ language: "zh-CN" });
+    await app.open(page);
+    await expect(page.getByRole("heading", { name: "阅读能力" })).toBeVisible();
+
+    await page.evaluate(() => {
+      const blocks = Array.from(document.querySelectorAll<HTMLElement>("[data-review-block-id]"));
+      const startBlock = blocks.find((block) => block.textContent?.trim() === "阅读能力");
+      const endBlock = blocks.find((block) =>
+        block.textContent?.includes("这是一份包含中文路径")
+      );
+      if (!startBlock || !endBlock || !startBlock.firstChild || !endBlock.firstChild) {
+        throw new Error("Unable to find cross-block selection targets.");
+      }
+
+      const range = document.createRange();
+      range.setStart(startBlock.firstChild, 0);
+      range.setEnd(endBlock.firstChild, endBlock.textContent?.length ?? 0);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    await page.getByRole("button", { name: "添加批注" }).click();
+    await page.getByPlaceholder("写下问题或修改建议").fill("跨段范围批注");
+    await page.locator(".annotation-composer-actions").getByRole("button", { name: "保存" }).click();
+
+    const review = await requestJson<ReviewFile>(request, `${app.apiUrl}/api/review`);
+    const annotation = review.annotations.find((item) => item.body === "跨段范围批注");
+    expect(annotation?.anchor.kind).toBe("range");
+    if (annotation?.anchor.kind !== "range") {
+      throw new Error("Expected a range anchor.");
+    }
+    expect(annotation.anchor.startBlockId).not.toBe(annotation.anchor.endBlockId);
+    expect(annotation.anchor.startBlockIndex).toBeLessThan(annotation.anchor.endBlockIndex);
+    expect(annotation.anchor.selectedText).toContain("阅读能力");
+    expect(annotation.anchor.selectedText).toContain("这是一份包含中文路径");
+
+    await expect.poll(async () => page.locator(".annotation-highlight").count()).toBeGreaterThan(1);
+    const highlightWidths = await page.locator(".annotation-highlight").evaluateAll((nodes) =>
+      nodes.map((node) => node.getBoundingClientRect().width)
+    );
+    const articleWidth = await page.locator(".document-content").evaluate(
+      (node) => node.getBoundingClientRect().width
+    );
+    expect(Math.max(...highlightWidths)).toBeLessThan(articleWidth * 0.92);
   } finally {
     await app.cleanup();
   }

@@ -1,5 +1,5 @@
 import express from "express";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -57,6 +57,7 @@ import type {
   CreateReviewEventRequest,
   ReviewEventDeliveryStatus,
   ReviewFile,
+  ReviewReply,
   UpdateAnnotationRequest,
   UpdateAnnotationStatusRequest,
   UpdateReviewEventRequest,
@@ -265,6 +266,15 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
     }
   });
 
+  app.post("/api/clipboard/text", async (request, response) => {
+    try {
+      await writeSystemClipboardText(readClipboardTextRequest(request.body));
+      response.json({ ok: true });
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
   app.put("/api/review", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
@@ -303,13 +313,18 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
   app.post("/api/review/annotations/:id/replies", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
-      response.json(
-        await addAnnotationReply(
-          currentMarkdownPath,
-          request.params.id,
-          request.body as AddReplyRequest
-        )
-      );
+      const replyRequest = request.body as AddReplyRequest;
+      let review = await addAnnotationReply(currentMarkdownPath, request.params.id, replyRequest);
+      const createdReply = findLatestReply(review, request.params.id);
+      if (shouldAutoSendReplyFollowup(createdReply)) {
+        review = await createReviewEvent(currentMarkdownPath, {
+          annotationId: request.params.id,
+          deliveryMode: "auto",
+          triggerReplyId: createdReply.id
+        });
+        dispatchReviewEventsInBackground(currentMarkdownPath);
+      }
+      response.json(review);
     } catch (error) {
       sendApiError(response, error);
     }
@@ -373,7 +388,11 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
   app.get("/api/review/annotations/:id/context", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
-      response.json(await getAnnotationContext(currentMarkdownPath, request.params.id));
+      response.json(
+        await getAnnotationContext(currentMarkdownPath, request.params.id, {
+          triggerReplyId: parseOptionalString(request.query.triggerReplyId)
+        })
+      );
     } catch (error) {
       sendApiError(response, error);
     }
@@ -700,6 +719,57 @@ function pickMarkdownPath(): Promise<string> {
   });
 }
 
+function readClipboardTextRequest(body: unknown): string {
+  if (!body || typeof body !== "object" || typeof (body as { text?: unknown }).text !== "string") {
+    throw new Error("Clipboard text is required.");
+  }
+  return (body as { text: string }).text;
+}
+
+function writeSystemClipboardText(text: string): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("System clipboard copy is only supported on macOS for now.");
+  }
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("/usr/bin/pbcopy", [], {
+      stdio: ["pipe", "ignore", "pipe"]
+    });
+    let stderr = "";
+    let settled = false;
+
+    const finish = (error?: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      finish(new Error(`Unable to open clipboard: ${error.message}`));
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        finish();
+        return;
+      }
+      finish(new Error(stderr.trim() || "Clipboard write was rejected."));
+    });
+    child.stdin.on("error", (error) => {
+      finish(new Error(`Unable to write clipboard text: ${error.message}`));
+    });
+    child.stdin.end(text, "utf8");
+  });
+}
+
 function sendApiError(response: express.Response, error: unknown): void {
   const status =
     error instanceof AnnotationNotFoundError ||
@@ -725,6 +795,18 @@ function dispatchReviewEventsInBackground(markdownPath: string): void {
       );
     });
   }, 0);
+}
+
+function findLatestReply(review: ReviewFile, annotationId: string): ReviewReply | undefined {
+  return review.annotations.find((annotation) => annotation.id === annotationId)?.replies.at(-1);
+}
+
+function shouldAutoSendReplyFollowup(reply: ReviewReply | undefined): reply is ReviewReply {
+  return reply?.author.type === "user" && reply.replyTo?.authorType === "agent";
+}
+
+function parseOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function parseReviewEventStatus(value: unknown): ReviewEventDeliveryStatus | undefined {

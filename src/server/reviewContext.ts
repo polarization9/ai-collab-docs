@@ -6,13 +6,14 @@ import type {
 } from "../shared/reviewTypes.js";
 import { loadReviewDocument } from "./document.js";
 import { parseMarkdownBlocks, type MarkdownBlock } from "./markdownBlocks.js";
-import { AnnotationNotFoundError, loadReviewFile } from "./review.js";
+import { AnnotationNotFoundError, ReplyNotFoundError, loadReviewFile } from "./review.js";
 
 const CONTEXT_RADIUS = 1200;
 
 export async function getAnnotationContext(
   markdownPath: string,
-  annotationId: string
+  annotationId: string,
+  options: { triggerReplyId?: string } = {}
 ): Promise<AnnotationContext> {
   const [document, review] = await Promise.all([
     loadReviewDocument(markdownPath),
@@ -24,6 +25,12 @@ export async function getAnnotationContext(
     throw new AnnotationNotFoundError(annotationId);
   }
 
+  const triggerReply = options.triggerReplyId
+    ? findReply(annotation.replies, options.triggerReplyId)
+    : undefined;
+  const triggerReplyTarget = triggerReply?.replyTo?.replyId
+    ? findReply(annotation.replies, triggerReply.replyTo.replyId)
+    : undefined;
   const selectedText = getAnchorSelectedText(annotation.anchor);
   const heading = findHeading(document.headings, annotation.anchor);
   const focusIndex = findFocusIndex(document.content, annotation, heading);
@@ -37,8 +44,18 @@ export async function getAnnotationContext(
     beforeMarkdown: document.content.slice(beforeStart, focusIndex),
     afterMarkdown: document.content.slice(focusIndex + selectedText.length, afterEnd),
     relatedMarkdown: getRelatedMarkdown(document.content, focusIndex, heading),
-    replies: annotation.replies
+    replies: annotation.replies,
+    ...(triggerReply ? { triggerReply } : {}),
+    ...(triggerReplyTarget ? { triggerReplyTarget } : {})
   };
+}
+
+function findReply(replies: ReviewAnnotation["replies"], replyId: string) {
+  const reply = replies.find((item) => item.id === replyId);
+  if (!reply) {
+    throw new ReplyNotFoundError(replyId);
+  }
+  return reply;
 }
 
 function findFocusIndex(
@@ -52,7 +69,7 @@ function findFocusIndex(
     return anchoredIndex;
   }
 
-  if (annotation.anchor.kind === "text") {
+  if (annotation.anchor.kind === "text" || annotation.anchor.kind === "range") {
     const prefixIndex = annotation.anchor.prefix
       ? markdown.indexOf(annotation.anchor.prefix)
       : -1;

@@ -110,4 +110,52 @@ describe("P0 MCP-equivalent reviewer contract", () => {
       await fixture.cleanup();
     }
   });
+
+  test("annotation context can mark a user reply as the follow-up focus", async () => {
+    const fixture = await createTempFixture();
+    try {
+      let review = await createAnnotation(fixture.markdownPath, {
+        body: "父级批注：这里需要进一步解释",
+        anchor: {
+          kind: "text",
+          headingId: "批注锚点",
+          headingText: "批注锚点",
+          blockId: "block-1",
+          blockIndex: 1,
+          startOffset: 0,
+          endOffset: "重复文本用于测试精确锚点".length,
+          selectedText: "重复文本用于测试精确锚点",
+          prefix: "",
+          suffix: "。",
+          anchorPrecision: "exact"
+        }
+      });
+      const annotationId = review.annotations[0].id;
+
+      review = await addAnnotationReply(fixture.markdownPath, annotationId, {
+        author: { type: "agent", name: "Codex" },
+        body: "Codex 先给出解释。"
+      });
+      const agentReplyId = review.annotations[0].replies[0].id;
+
+      review = await addAnnotationReply(fixture.markdownPath, annotationId, {
+        author: { type: "user", name: "User" },
+        body: "那这里是不是还要补一个边界条件？",
+        replyToReplyId: agentReplyId
+      });
+      const triggerReplyId = review.annotations[0].replies.at(-1)?.id as string;
+
+      const context = await getAnnotationContext(fixture.markdownPath, annotationId, {
+        triggerReplyId
+      });
+      expect(context.annotation.body).toContain("父级批注");
+      expect(context.replies).toHaveLength(2);
+      expect(context.triggerReply?.id).toBe(triggerReplyId);
+      expect(context.triggerReply?.body).toContain("边界条件");
+      expect(context.triggerReplyTarget?.id).toBe(agentReplyId);
+      expect(context.triggerReplyTarget?.author.type).toBe("agent");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });

@@ -145,6 +145,21 @@ export async function openSettingsWindow(): Promise<void> {
   );
 }
 
+export async function writeNativeClipboardText(text: string): Promise<boolean> {
+  if (!isTauriRuntime()) {
+    return false;
+  }
+
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("write_clipboard_text", { text });
+    return true;
+  } catch (error) {
+    console.warn("Unable to write clipboard through Tauri.", error);
+    return false;
+  }
+}
+
 export async function notifySettingsChanged(settings: AppSettings): Promise<void> {
   if (isTauriRuntime()) {
     try {

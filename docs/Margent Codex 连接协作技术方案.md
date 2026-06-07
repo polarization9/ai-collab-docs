@@ -20,7 +20,7 @@
 - 读取和保存 `.review.json` 批注文件。
 - 读取和保存 `.codex.json` 文档连接文件。
 - 记录来源会话和当前投递目标。
-- 在用户手动点击 `@codex` 或开启自动监控后，把批注任务投递给当前目标 Codex 会话。
+- 在用户手动点击 `codex` 或开启自动监控后，把批注任务投递给当前目标 Codex 会话。
 - 默认通过 Codex App Server `thread/resume` 把批注任务追加到来源会话，保留来源会话已有上下文。
 - 提供 MCP 工具，让 Codex 自己读取文档、读取批注、回复批注、修改正文和更新状态。
 - 来源会话不可用时，提供“复制接续指令”，让用户在目标 Codex 会话里完成重新绑定。
@@ -77,7 +77,7 @@
 ```text
 用户创建批注
 → 批注保存到 .review.json
-→ 用户点击批注卡片操作行的 @codex
+→ 用户点击批注卡片操作行的 codex
 → Server 创建 manual review event
 → Codex Bridge resume 当前目标会话
 → Codex Bridge 在同一 thread 中启动新 turn
@@ -110,7 +110,7 @@
 → 用户粘贴到目标 Codex 会话
 → 目标 Codex 调用 MCP 绑定自己为接续对话
 → .codex.json 的当前 target 切换为 successor
-→ 后续 @codex 或自动监控投递到接续对话
+→ 后续 codex 或自动监控投递到接续对话
 ```
 
 ## 4. 当前实现基础
@@ -133,7 +133,7 @@
 - `.codex.json` 写入和目标会话切换。
 - 接续指令生成和 MCP 绑定工具。
 - 批注事件模型。
-- `@codex` 手动投递。
+- `codex` 手动投递。
 - Codex 自动监控开关。
 - 串行投递队列。
 - Codex Bridge Adapter。
@@ -349,6 +349,9 @@ UI 行为：
 
 - 点击“复制接续指令”后复制 `instruction`。
 - 展示 toast：`指令复制成功，粘贴到目标会话发送给 Codex 即可重连`。
+- 连接卡片进入轻量等待态，状态文案展示“未检测到对应 Codex 会话”。
+- 前端短轮询当前文档的 `.codex.json` / Codex Link API。
+- 目标 Codex 会话绑定成功后，状态文案更新为“已检测到对应 Codex 会话”。
 - 不要求用户输入或查找 thread id。
 
 ## 7. Review Event 设计
@@ -422,7 +425,7 @@ type ReviewEvent = {
 手动投递：
 
 ```text
-用户点击 @codex
+用户点击 codex
 → queued
 → delivering
 → sent
@@ -477,7 +480,7 @@ POST /api/review/annotations
 - 自动监控开启但没有可用目标：保存批注，不投递；UI 提示先绑定来源会话或复制接续指令。
 - 批注创建不因为 Codex 连接异常而失败。
 
-### 8.2 手动 `@codex`
+### 8.2 手动 `codex`
 
 ```text
 POST /api/bridge/annotations/:annotationId/send
@@ -494,16 +497,16 @@ POST /api/bridge/annotations/:annotationId/send
 
 用户界面：
 
-- `@codex` 放在批注卡片操作行，与 `回复`、`编辑` 同级。
+- `codex` 放在批注卡片操作行，与 `回复`、`编辑` 同级。
 - 不做醒目的“发送给 Codex”主按钮。
-- 自动监控开启时，`@codex` 仍可用于失败后的手动补发。
+- 自动监控开启时，`codex` 仍可用于失败后的手动补发。
 
 ### 8.3 删除、编辑和状态变化对事件的影响
 
 - 删除批注：未投递事件标记为 `ignored`；已经投递的事件不撤回。
 - 编辑批注：如果事件还在 `queued`，投递时读取最新批注内容。
 - 标记 `resolved`：未投递事件标记为 `ignored`。
-- 重新打开批注：不自动创建事件，用户可点击 `@codex` 或等待后续新批注触发自动监控。
+- 重新打开批注：不自动创建事件，用户可点击 `codex` 或等待后续新批注触发自动监控。
 
 ## 9. 自动监控与串行队列
 
@@ -913,11 +916,11 @@ MCP 工具说明承担建议性协作规则：
 
 - 回复。
 - 编辑。
-- `@codex`。
+- `codex`。
 - 删除。
 - resolved / reopen 图标。
 
-`@codex` 是手动投递入口。关闭自动监控时，用户通过它主动发送给 Codex；开启自动监控后，它可以作为失败后的补发入口。
+`codex` 是手动投递入口。关闭自动监控时，用户通过它主动发送给 Codex；开启自动监控后，它可以作为失败后的补发入口。
 
 ### 14.4 异常表达
 
@@ -926,6 +929,8 @@ MCP 工具说明承担建议性协作规则：
 - 连接状态卡片展示“来源会话不可用”。
 - 提供“复制接续指令”按钮。
 - 点击后复制指令，并展示 toast：`指令复制成功，粘贴到目标会话发送给 Codex 即可重连`。
+- 点击后不展示 thread id，不要求用户手动填写任何会话标识。
+- 如果 `.codex.json` 中已经出现接续会话，连接卡片展示“已检测到对应 Codex 会话”；否则展示“未检测到对应 Codex 会话”。
 
 投递失败：
 
@@ -939,8 +944,8 @@ MCP 工具说明承担建议性协作规则：
 关闭自动监控时：
 
 - 新批注只保存本地，不自动创建投递任务。
-- 批注卡片操作行展示 `@codex`。
-- 用户点击 `@codex` 才创建 manual event。
+- 批注卡片操作行展示 `codex`。
+- 用户点击 `codex` 才创建 manual event。
 
 ### 14.6 开启自动监控
 
@@ -1064,7 +1069,7 @@ write temp file
 ### 18.2 批注事件
 
 - 自动监控关闭时创建批注不创建 auto event。
-- 点击 `@codex` 创建 manual event。
+- 点击 `codex` 创建 manual event。
 - 自动监控开启时新批注创建 queued event。
 - 删除批注会把未投递事件标记为 ignored。
 - 标记 resolved 会把未投递事件标记为 ignored。
@@ -1092,7 +1097,7 @@ write temp file
 ### 18.5 UI
 
 - 批注筛选只显示全部、已解决、未解决。
-- `@codex` 与回复、编辑在同一操作行。
+- `codex` 与回复、编辑在同一操作行。
 - 来源不可用时有复制接续指令按钮。
 - 点击复制接续指令后 toast 文案正确。
 - 投递失败只展示轻量重试 icon，不展示详情面板。
@@ -1124,9 +1129,9 @@ write temp file
 - 实现创建、查询、更新和重试 API。
 - 实现合法状态流转。
 
-### Step 3：手动 `@codex`
+### Step 3：手动 `codex`
 
-- 批注卡片增加 `@codex` 操作。
+- 批注卡片增加 `codex` 操作。
 - 实现 `POST /api/bridge/annotations/:annotationId/send`。
 - 无目标时引导复制接续指令。
 - 投递失败时展示轻量重试 icon。
@@ -1176,7 +1181,7 @@ P0：
 
 P1：
 
-- 用户新增批注后，可以通过 `@codex` 手动发送给当前目标 Codex 会话。
+- 用户新增批注后，可以通过 `codex` 手动发送给当前目标 Codex 会话。
 - 当目标是来源会话时，Bridge 通过 `thread/resume` 把任务追加到来源 thread，而不是新建 thread。
 - Codex 在来源 thread 中处理批注时，可以使用来源会话已有上下文。
 - 自动监控开启后，新批注可以进入内部投递状态流：`queued / delivering / sent / processing / handled / failed`。
@@ -1202,7 +1207,7 @@ P2：
 
 - 使用 Bridge Adapter 封装投递能力。
 - P0 采用已验证的 App Server `thread/resume → turn/start`。
-- 对用户只暴露 `@codex`、自动监控开关和复制接续指令。
+- 对用户只暴露 `codex`、自动监控开关和复制接续指令。
 - 不把某个底层接口的 schema 泄漏到 UI 或文档旁文件。
 
 ### 21.2 当前会话标识获取

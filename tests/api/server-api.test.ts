@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { startServer, type StartedServer } from "../../src/server/index.js";
-import type { ReviewFile } from "../../src/shared/reviewTypes.js";
+import type { AnnotationContext, ReviewFile } from "../../src/shared/reviewTypes.js";
 import type { ReviewBootstrap, ReviewDocument } from "../../src/shared/types.js";
 import { createTempFixture, fetchJson, writeCodexLink } from "../helpers/fixtures.js";
 
@@ -31,6 +31,22 @@ function textAnchor(selectedText = "重复文本用于测试精确锚点") {
     suffix: "。",
     anchorPrecision: "exact" as const
   };
+}
+
+async function waitForReviewEventStatus(
+  baseUrl: string,
+  eventId: string,
+  status: string
+): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const review = await fetchJson<ReviewFile>(`${baseUrl}/api/review`);
+    const event = review.body.events?.find((item) => item.id === eventId);
+    if (event?.deliveryStatus === status) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Review event ${eventId} did not reach ${status}.`);
 }
 
 describe("P0 server API coverage", () => {
@@ -206,6 +222,95 @@ describe("P0 server API coverage", () => {
       expect(sent.body.review.events?.some((event) => event.deliveryMode === "manual")).toBe(true);
       expect(sent.body.event?.deliveryMode).toBe("manual");
       expect(sent.body.event?.deliveryStatus).toBe("failed");
+    } finally {
+      if (previousDisable === undefined) {
+        delete process.env.MARGENT_DISABLE_CODEX_BRIDGE;
+      } else {
+        process.env.MARGENT_DISABLE_CODEX_BRIDGE = previousDisable;
+      }
+      await fixture.cleanup();
+    }
+  });
+
+  test("user replies to Agent replies create focused Codex follow-up events", async () => {
+    const fixture = await createTempFixture();
+    const previousDisable = process.env.MARGENT_DISABLE_CODEX_BRIDGE;
+    process.env.MARGENT_DISABLE_CODEX_BRIDGE = "1";
+    try {
+      await writeCodexLink(fixture.markdownPath, {
+        source: {
+          type: "codex",
+          threadId: "thread-source",
+          cwd: fixture.dir,
+          createdAt: "2026-06-06T00:00:00.000Z",
+          updatedAt: "2026-06-06T00:00:00.000Z"
+        },
+        target: {
+          type: "source",
+          threadId: "thread-source",
+          cwd: fixture.dir,
+          configuredAt: "2026-06-06T00:00:00.000Z",
+          configuredBy: "codex",
+          configuredVia: "source"
+        },
+        bridge: { autoSendNewAnnotations: false }
+      });
+
+      const started = await startServer({ markdownPath: fixture.markdownPath, port: 0 });
+      startedServers.push(started);
+
+      const created = await fetchJson<ReviewFile>(`${started.url}/api/review/annotations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          body: "父级批注需要讨论",
+          anchor: textAnchor()
+        })
+      });
+      const annotationId = created.body.annotations[0].id;
+      expect(created.body.events).toHaveLength(0);
+
+      const agentReply = await fetchJson<ReviewFile>(
+        `${started.url}/api/review/annotations/${annotationId}/replies`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: "Codex 的上一条回复" })
+        }
+      );
+      const agentReplyId = agentReply.body.annotations[0].replies[0].id;
+      expect(agentReply.body.events).toHaveLength(0);
+
+      const followup = await fetchJson<ReviewFile>(
+        `${started.url}/api/review/annotations/${annotationId}/replies`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            author: { type: "user", name: "User" },
+            body: "继续追问 Codex",
+            replyToReplyId: agentReplyId
+          })
+        }
+      );
+      const userReply = followup.body.annotations[0].replies.at(-1);
+      const event = followup.body.events?.at(-1);
+      expect(userReply?.body).toBe("继续追问 Codex");
+      expect(event?.type).toBe("reply_followup");
+      expect(event?.deliveryMode).toBe("auto");
+      expect(event?.annotationId).toBe(annotationId);
+      expect(event?.triggerReplyId).toBe(userReply?.id);
+      expect(event?.replyToReplyId).toBe(agentReplyId);
+
+      const context = await fetchJson<AnnotationContext>(
+        `${started.url}/api/review/annotations/${annotationId}/context?triggerReplyId=${encodeURIComponent(
+          userReply?.id ?? ""
+        )}`
+      );
+      expect(context.body.annotation.body).toBe("父级批注需要讨论");
+      expect(context.body.triggerReply?.body).toBe("继续追问 Codex");
+      expect(context.body.triggerReplyTarget?.body).toBe("Codex 的上一条回复");
+      await waitForReviewEventStatus(started.url, event?.id as string, "failed");
     } finally {
       if (previousDisable === undefined) {
         delete process.env.MARGENT_DISABLE_CODEX_BRIDGE;

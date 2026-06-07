@@ -49,19 +49,33 @@ export function captureAnnotationDraft(
   const heading = getHeadingFromBlock(startBlock, headings);
 
   if (startBlock !== endBlock) {
+    const endBlockMeta = getBlockMeta(endBlock);
+    const startBlockText = startBlock.textContent ?? "";
+    const endBlockText = endBlock.textContent ?? "";
+    const startOffset = getTextOffset(startBlock, range.startContainer, range.startOffset);
+    const endOffset = getTextOffset(endBlock, range.endContainer, range.endOffset);
+
     return {
       selectedText,
       rect,
       anchorRect,
       anchor: {
-        kind: "block",
+        kind: "range",
         headingId: heading?.id ?? null,
         headingText: heading?.text ?? null,
         blockId: blockMeta.blockId,
         blockIndex: blockMeta.blockIndex,
+        startBlockId: blockMeta.blockId,
+        startBlockIndex: blockMeta.blockIndex,
+        startOffset,
+        endBlockId: endBlockMeta.blockId,
+        endBlockIndex: endBlockMeta.blockIndex,
+        endOffset,
         selectedText,
+        prefix: startBlockText.slice(Math.max(0, startOffset - CONTEXT_CHARS), startOffset),
+        suffix: endBlockText.slice(endOffset, endOffset + CONTEXT_CHARS),
         originalSelectedText: selectedText,
-        anchorPrecision: "block"
+        anchorPrecision: "exact"
       }
     };
   }

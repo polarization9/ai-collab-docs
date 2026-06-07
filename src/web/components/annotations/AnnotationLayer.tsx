@@ -6,7 +6,7 @@ type AnnotationLayerProps = {
   annotations: ReviewAnnotation[];
   containerRef: RefObject<HTMLElement | null>;
   selectedAnnotationId: string | null;
-  onSelect: (annotationId: string) => void;
+  onSelect: (annotationId: string, options?: { scroll?: boolean }) => void;
 };
 
 type HighlightRect = {
@@ -107,7 +107,7 @@ export function AnnotationLayer({
             width: rect.width,
             height: rect.height
           }}
-          onClick={() => onSelect(rect.annotationId)}
+          onClick={() => onSelect(rect.annotationId, { scroll: false })}
           tabIndex={-1}
         />
       ))}

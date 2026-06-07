@@ -209,10 +209,15 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
     {
       title: "Get Annotation Context",
       description:
-        "Read one annotation with selected text, nearby Markdown, the parent heading, and existing replies. Use this before answering or editing based on a specific annotation.",
+        "Read one annotation with selected text, nearby Markdown, the parent heading, existing replies, and an optional trigger reply for follow-up tasks. Use this before answering or editing based on a specific annotation.",
       inputSchema: {
         documentPath: z.string().min(1).optional().describe("Optional Markdown path."),
-        annotationId: z.string().min(1).describe("Annotation id, for example ann_abc123.")
+        annotationId: z.string().min(1).describe("Annotation id, for example ann_abc123."),
+        triggerReplyId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional reply id that triggered this follow-up task.")
       },
       annotations: {
         readOnlyHint: true,
@@ -221,8 +226,10 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         openWorldHint: false
       }
     },
-    async ({ documentPath, annotationId }) =>
-      jsonToolResult(await getAnnotationContextPayload(markdownPath, annotationId, documentPath))
+    async ({ documentPath, annotationId, triggerReplyId }) =>
+      jsonToolResult(
+        await getAnnotationContextPayload(markdownPath, annotationId, documentPath, triggerReplyId)
+      )
   );
 
   server.registerTool(
@@ -418,7 +425,12 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
       inputSchema: {
         documentPath: z.string().min(1).optional().describe("Optional Markdown path."),
         annotationId: z.string().min(1).describe("Annotation id."),
-        deliveryMode: z.enum(["manual", "auto"]).describe("manual or auto.")
+        deliveryMode: z.enum(["manual", "auto"]).describe("manual or auto."),
+        triggerReplyId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional reply id when this event is a follow-up to an Agent reply.")
       },
       annotations: {
         readOnlyHint: false,
@@ -427,12 +439,13 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         openWorldHint: false
       }
     },
-    async ({ documentPath, annotationId, deliveryMode }) =>
+    async ({ documentPath, annotationId, deliveryMode, triggerReplyId }) =>
       jsonToolResult(
         await createReviewEventPayload(
           resolveToolMarkdownPath(markdownPath, documentPath),
           annotationId,
-          deliveryMode
+          deliveryMode,
+          triggerReplyId
         )
       )
   );
@@ -694,12 +707,14 @@ async function listAnnotationsPayload(
 async function getAnnotationContextPayload(
   markdownPath: string | undefined,
   annotationId: string,
-  documentPath?: string
+  documentPath?: string,
+  triggerReplyId?: string
 ): Promise<ToolResultPayload> {
   return {
     context: await getAnnotationContext(
       resolveToolMarkdownPath(markdownPath, documentPath),
-      annotationId
+      annotationId,
+      { triggerReplyId }
     )
   };
 }
@@ -829,9 +844,14 @@ async function updateStatusPayload(
 async function createReviewEventPayload(
   markdownPath: string,
   annotationId: string,
-  deliveryMode: "manual" | "auto"
+  deliveryMode: "manual" | "auto",
+  triggerReplyId?: string
 ): Promise<ToolResultPayload> {
-  const review = await createReviewEvent(markdownPath, { annotationId, deliveryMode });
+  const review = await createReviewEvent(markdownPath, {
+    annotationId,
+    deliveryMode,
+    triggerReplyId
+  });
   return {
     review: summarizeReview(review),
     event: review.events?.[review.events.length - 1]

@@ -93,7 +93,7 @@ export function MermaidBlock({ code, documentId, index, reviewBlockProps }: Merm
         if (!cancelled) {
           setState({
             status: "error",
-            message: error instanceof Error ? error.message : "Unable to render Mermaid diagram."
+            message: error instanceof Error ? error.message : t("mermaid.renderFailed")
           });
         }
       });
@@ -101,7 +101,7 @@ export function MermaidBlock({ code, documentId, index, reviewBlockProps }: Merm
     return () => {
       cancelled = true;
     };
-  }, [appThemeKey, cacheKey, code, themeKey]);
+  }, [appThemeKey, cacheKey, code, t, themeKey]);
 
   useLayoutEffect(() => {
     const svg = getCurrentSvg();
@@ -151,7 +151,7 @@ export function MermaidBlock({ code, documentId, index, reviewBlockProps }: Merm
       await action();
       showFeedback(label);
     } catch (error) {
-      showFeedback(error instanceof Error ? error.message : "Action failed");
+      showFeedback(error instanceof Error ? error.message : t("code.actionFailed"));
     }
   };
 

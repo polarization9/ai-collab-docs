@@ -145,6 +145,13 @@ export async function createSuccessorInstruction(
   );
 }
 
+export async function copyTextToSystemClipboard(text: string): Promise<void> {
+  await requestJson<{ ok: boolean }>("/api/clipboard/text", {
+    method: "POST",
+    body: JSON.stringify({ text })
+  });
+}
+
 export async function saveDocument(
   request: SaveDocumentRequest,
   documentPath?: string

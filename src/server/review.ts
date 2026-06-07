@@ -239,17 +239,24 @@ export async function createReviewEvent(
 ): Promise<ReviewFile> {
   return withReviewMutation(markdownPath, async () => {
     const review = await loadReviewFile(markdownPath);
-    findAnnotation(review, request.annotationId);
+    const annotation = findAnnotation(review, request.annotationId);
+    const triggerReply = request.triggerReplyId
+      ? findReply(annotation, request.triggerReplyId)
+      : undefined;
     const link = await loadCodexDocumentLink(markdownPath);
     const target = resolveCodexTarget(link);
     const now = new Date().toISOString();
     const event: ReviewEvent = {
       id: createId("evt"),
-      type: "annotation_created",
+      type: triggerReply ? "reply_followup" : "annotation_created",
       documentPath: markdownPath,
       annotationId: request.annotationId,
+      ...(triggerReply ? { triggerReplyId: triggerReply.id } : {}),
+      ...(triggerReply?.replyTo?.replyId ? { replyToReplyId: triggerReply.replyTo.replyId } : {}),
       sourceThreadId: link?.source?.threadId,
+      sourceCwd: link?.source?.cwd,
       targetThreadId: target?.threadId,
+      targetCwd: target?.cwd,
       targetType: target?.type,
       deliveryMode: request.deliveryMode,
       deliveryStatus: "queued",
@@ -466,7 +473,11 @@ function applyEventUpdate(event: ReviewEvent, request: UpdateReviewEventRequest)
 function normalizeReviewEvent(event: ReviewEvent): ReviewEvent {
   return {
     ...event,
-    type: "annotation_created",
+    type: event.type === "reply_followup" ? "reply_followup" : "annotation_created",
+    triggerReplyId:
+      typeof event.triggerReplyId === "string" ? event.triggerReplyId : undefined,
+    replyToReplyId:
+      typeof event.replyToReplyId === "string" ? event.replyToReplyId : undefined,
     deliveryMode: event.deliveryMode === "auto" ? "auto" : "manual",
     deliveryStatus: isReviewEventStatus(event.deliveryStatus)
       ? event.deliveryStatus
@@ -507,7 +518,11 @@ function prepareAnchorForCreate(anchor: ReviewAnchor): ReviewAnchor {
 
   if (!anchor.anchorPrecision) {
     anchor.anchorPrecision =
-      anchor.kind === "text" ? "exact" : anchor.kind === "document" ? "heading" : "block";
+      anchor.kind === "text" || anchor.kind === "range"
+        ? "exact"
+        : anchor.kind === "document"
+          ? "heading"
+          : "block";
   }
 
   return anchor;

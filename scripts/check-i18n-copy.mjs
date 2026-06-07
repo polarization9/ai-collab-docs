@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import ts from "typescript";
 
 const root = process.cwd();
 const zhPath = path.join(root, "src/web/i18n/locales/zh-CN.ts");
@@ -49,6 +50,97 @@ async function collectUsedKeys() {
     }
   }
   return used;
+}
+
+function shouldScanForHardcodedCopy(file) {
+  const relative = path.relative(root, file);
+  return (
+    relative.endsWith(".tsx") &&
+    relative.startsWith("src/web/") &&
+    !relative.startsWith("src/web/i18n/") &&
+    !relative.startsWith("src/web/prototypes/")
+  );
+}
+
+function normalizeCopy(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function hasHumanCopy(text) {
+  return /[A-Za-z\u4e00-\u9fff]/.test(text);
+}
+
+function locationFor(sourceFile, position) {
+  const { line, character } = sourceFile.getLineAndCharacterOfPosition(position);
+  return `${path.relative(root, sourceFile.fileName)}:${line + 1}:${character + 1}`;
+}
+
+function collectHardcodedCopyIssues(file, source) {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const issues = [];
+
+  function addIssue(node, text, kind) {
+    const normalized = normalizeCopy(text);
+    if (!normalized || !hasHumanCopy(normalized)) {
+      return;
+    }
+    issues.push(`${locationFor(sourceFile, node.getStart(sourceFile))} hardcoded ${kind}: "${normalized}"`);
+  }
+
+  function visit(node) {
+    if (ts.isJsxText(node)) {
+      addIssue(node, node.getText(sourceFile), "visible copy");
+    }
+
+    if (ts.isJsxAttribute(node) && isCopyAttribute(node.name.text)) {
+      const initializer = node.initializer;
+      if (initializer && ts.isStringLiteral(initializer)) {
+        addIssue(initializer, initializer.text, `${node.name.text} copy`);
+      } else if (
+        initializer &&
+        ts.isJsxExpression(initializer) &&
+        initializer.expression &&
+        hasHardcodedStringExpression(initializer.expression)
+      ) {
+        addIssue(initializer.expression, initializer.expression.getText(sourceFile), `${node.name.text} copy`);
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return issues;
+}
+
+function isCopyAttribute(name) {
+  return name === "aria-label" || name === "title" || name === "placeholder";
+}
+
+function hasHardcodedStringExpression(expression) {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    return hasHumanCopy(expression.text);
+  }
+
+  if (ts.isTemplateExpression(expression)) {
+    return hasHumanCopy(expression.head.text) ||
+      expression.templateSpans.some((span) => hasHumanCopy(span.literal.text));
+  }
+
+  if (ts.isConditionalExpression(expression)) {
+    return hasHardcodedStringExpression(expression.whenTrue) ||
+      hasHardcodedStringExpression(expression.whenFalse);
+  }
+
+  return false;
+}
+
+async function checkHardcodedProductionCopy(errors) {
+  const files = await walk(path.join(root, "src/web"));
+  for (const file of files.filter(shouldScanForHardcodedCopy)) {
+    const source = await fs.readFile(file, "utf8");
+    errors.push(...collectHardcodedCopyIssues(file, source));
+  }
 }
 
 async function checkNativeResource(resourcePath, errors) {
@@ -113,6 +205,7 @@ for (const [key, files] of usedKeys.entries()) {
 }
 
 await Promise.all(resources.map((resourcePath) => checkNativeResource(resourcePath, errors)));
+await checkHardcodedProductionCopy(errors);
 
 if (errors.length > 0) {
   console.error("i18n-copy-check failed:");

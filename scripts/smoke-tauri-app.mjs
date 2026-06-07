@@ -49,6 +49,10 @@ if (fs.existsSync(appPath)) {
   assert(exists("Contents/Resources/en.lproj"), "Missing English native resource folder");
   assert(exists("Contents/Resources/zh-Hans.lproj"), "Missing Chinese native resource folder");
   assert(exists("Contents/Resources/_up_/dist"), "Missing packaged server/web dist");
+  assert(
+    exists("Contents/Resources/_up_/examples/Margent Quickstart.md"),
+    "Missing packaged Quickstart example"
+  );
   assert(exists("Contents/Resources/_up_/node_modules"), "Missing packaged node_modules");
   assert(isExecutable("Contents/MacOS/Margent"), "Missing executable Margent binary");
   assert(isExecutable("Contents/MacOS/margent-server"), "Missing executable server sidecar");

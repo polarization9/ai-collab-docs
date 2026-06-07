@@ -2535,36 +2535,35 @@ body.table-column-resizing {
 .annotation-highlight {
   position: absolute;
   border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-open-text) 30%, transparent);
   border-radius: 3px;
-  background: color-mix(in srgb, var(--color-open-bg) 56%, transparent);
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--color-open-text) 34%, transparent);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--color-open-bg) 34%, transparent);
+  box-shadow: none;
   cursor: pointer;
   pointer-events: auto;
   transition:
-    background-color 0.14s ease,
-    box-shadow 0.14s ease;
+    background 0.14s ease,
+    outline-color 0.14s ease;
 }
 
 .annotation-highlight:hover,
 .annotation-highlight-selected {
-  outline: 0;
-  background: color-mix(in srgb, var(--color-open-bg) 72%, transparent);
-  box-shadow:
-    inset 0 -2px 0 color-mix(in srgb, var(--color-open-text) 56%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--color-open-text) 20%, transparent);
+  background: color-mix(in srgb, var(--color-open-bg) 34%, transparent);
+  box-shadow: none;
 }
 
 .annotation-highlight-resolved {
+  border-bottom-color: var(--color-resolved-selection-border);
   background: var(--color-resolved-selection-bg);
-  box-shadow: inset 0 -2px 0 var(--color-resolved-selection-border);
+  box-shadow: none;
 }
 
 .annotation-highlight-resolved:hover,
 .annotation-highlight-resolved.annotation-highlight-selected {
-  background: color-mix(in srgb, var(--color-resolved-selection-bg) 86%, var(--color-accent-soft));
-  box-shadow:
-    inset 0 -2px 0 color-mix(in srgb, var(--color-resolved-selection-border) 78%, var(--color-success)),
-    0 0 0 1px var(--color-resolved-selection-border);
+  background: var(--color-resolved-selection-bg);
+  box-shadow: none;
 }
 
 .annotation-draft-button {

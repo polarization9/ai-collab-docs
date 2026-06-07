@@ -1,5 +1,5 @@
 import { MessageSquare, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AnnotationDraft } from "../../review/anchorCapture";
 import { useI18n } from "../../i18n";
 
@@ -7,38 +7,77 @@ type AnnotationSelectionToolbarProps = {
   draft: AnnotationDraft | null;
   onCreate: (body: string) => Promise<void>;
   onCancel: () => void;
+  trackSelection?: boolean;
 };
 
 export function AnnotationSelectionToolbar({
   draft,
   onCreate,
-  onCancel
+  onCancel,
+  trackSelection = false
 }: AnnotationSelectionToolbarProps) {
   const { t } = useI18n();
   const [body, setBody] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isComposerOpen, setIsComposerOpen] = useState(false);
+  const [liveAnchorRect, setLiveAnchorRect] = useState<DOMRect | null>(null);
+  const onCancelRef = useRef(onCancel);
+
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     setBody("");
     setIsComposerOpen(false);
     setIsSaving(false);
+    setLiveAnchorRect(draft?.anchorRect ?? null);
   }, [draft]);
+
+  useEffect(() => {
+    if (!draft || !trackSelection) {
+      return;
+    }
+
+    let animationFrame = 0;
+
+    const updateAnchorRect = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        const nextAnchorRect = getCurrentSelectionAnchorRect();
+        if (!nextAnchorRect || !isRectInViewport(nextAnchorRect)) {
+          onCancelRef.current();
+          return;
+        }
+        setLiveAnchorRect(nextAnchorRect);
+      });
+    };
+
+    window.addEventListener("scroll", updateAnchorRect, { passive: true });
+    window.addEventListener("resize", updateAnchorRect);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("scroll", updateAnchorRect);
+      window.removeEventListener("resize", updateAnchorRect);
+    };
+  }, [draft, trackSelection]);
 
   if (!draft) {
     return null;
   }
 
+  const anchorRect = liveAnchorRect ?? draft.anchorRect;
   const viewportPadding = 14;
   const composerWidth = 316;
   const composerHeight = 232;
-  const iconTop = Math.min(window.innerHeight - 42, Math.max(viewportPadding, draft.anchorRect.bottom + 6));
+  const iconTop = Math.min(window.innerHeight - 42, Math.max(viewportPadding, anchorRect.bottom + 6));
   const iconLeft = Math.min(
     window.innerWidth - 42,
-    Math.max(viewportPadding, draft.anchorRect.right - 16)
+    Math.max(viewportPadding, anchorRect.right - 16)
   );
   const composerPosition = getComposerPosition(
-    draft,
+    { top: iconTop, left: iconLeft },
     composerWidth,
     composerHeight,
     viewportPadding
@@ -119,43 +158,20 @@ type ComposerPosition = {
 };
 
 function getComposerPosition(
-  draft: AnnotationDraft,
+  iconPosition: ComposerPosition,
   width: number,
   height: number,
   padding: number
 ): ComposerPosition {
-  const selectionRect = draft.rect;
-  const anchorRect = draft.anchorRect;
-  const belowTop = Math.max(selectionRect.bottom, anchorRect.bottom) + 8;
-  const aboveTop = Math.min(selectionRect.top, anchorRect.top) - height - 8;
-  const candidates: ComposerPosition[] = [
-    { top: belowTop, left: anchorRect.right },
-    { top: belowTop, left: anchorRect.left - width },
-    { top: belowTop, left: selectionRect.left },
-    { top: aboveTop, left: anchorRect.right },
-    { top: aboveTop, left: anchorRect.left - width },
-    { top: aboveTop, left: selectionRect.left }
-  ];
-
-  return candidates
-    .map((candidate, index) => {
-      const position = clampComposerPosition(candidate, width, height, padding);
-      return {
-        index,
-        position,
-        overlapArea: getOverlapArea(
-          {
-            top: position.top,
-            right: position.left + width,
-            bottom: position.top + height,
-            left: position.left
-          },
-          selectionRect
-        )
-      };
-    })
-    .sort((left, right) => left.overlapArea - right.overlapArea || left.index - right.index)[0]
-    .position;
+  return clampComposerPosition(
+    {
+      top: iconPosition.top + 42,
+      left: iconPosition.left
+    },
+    width,
+    height,
+    padding
+  );
 }
 
 function clampComposerPosition(
@@ -170,15 +186,23 @@ function clampComposerPosition(
   };
 }
 
-function getOverlapArea(
-  first: { top: number; right: number; bottom: number; left: number },
-  second: DOMRect
-): number {
-  const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
-  const height = Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
-  return width * height;
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function getCurrentSelectionAnchorRect(): DOMRect | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed || !selection.toString().trim()) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  const rects = Array.from(range.getClientRects()).filter(
+    (rect) => rect.width > 0 && rect.height > 0
+  );
+  return rects[rects.length - 1] ?? range.getBoundingClientRect();
+}
+
+function isRectInViewport(rect: DOMRect): boolean {
+  return rect.bottom >= 0 && rect.top <= window.innerHeight && rect.right >= 0 && rect.left <= window.innerWidth;
 }

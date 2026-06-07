@@ -236,7 +236,9 @@ describe("P0 unit coverage", () => {
   test("app state writes merge concurrent updates and avoid tmp collisions", async () => {
     const appDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "margent-app-state-"));
     const previousAppDataDir = process.env.MARGENT_APP_DATA_DIR;
+    const previousDisableQuickstart = process.env.MARGENT_DISABLE_QUICKSTART_RECENT;
     process.env.MARGENT_APP_DATA_DIR = appDataDir;
+    process.env.MARGENT_DISABLE_QUICKSTART_RECENT = "1";
     try {
       await Promise.all([
         saveAppSettings({ language: "zh-CN" }),
@@ -267,7 +269,71 @@ describe("P0 unit coverage", () => {
       } else {
         process.env.MARGENT_APP_DATA_DIR = previousAppDataDir;
       }
+      if (previousDisableQuickstart === undefined) {
+        delete process.env.MARGENT_DISABLE_QUICKSTART_RECENT;
+      } else {
+        process.env.MARGENT_DISABLE_QUICKSTART_RECENT = previousDisableQuickstart;
+      }
       await fs.rm(appDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("quickstart recent document is seeded once without restoring deleted files", async () => {
+    const appDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "margent-quickstart-state-"));
+    const quickstartDir = await fs.mkdtemp(path.join(os.tmpdir(), "margent-quickstart-docs-"));
+    const templatePath = path.join(quickstartDir, "template.md");
+    const documentPath = path.join(quickstartDir, "Margent Quickstart.md");
+    const previousAppDataDir = process.env.MARGENT_APP_DATA_DIR;
+    const previousDisableQuickstart = process.env.MARGENT_DISABLE_QUICKSTART_RECENT;
+    const previousTemplatePath = process.env.MARGENT_QUICKSTART_TEMPLATE_PATH;
+    const previousDocumentPath = process.env.MARGENT_QUICKSTART_DOCUMENT_PATH;
+
+    process.env.MARGENT_APP_DATA_DIR = appDataDir;
+    delete process.env.MARGENT_DISABLE_QUICKSTART_RECENT;
+    process.env.MARGENT_QUICKSTART_TEMPLATE_PATH = templatePath;
+    process.env.MARGENT_QUICKSTART_DOCUMENT_PATH = documentPath;
+
+    try {
+      await fs.writeFile(templatePath, "# Quickstart\n", "utf8");
+
+      const firstRecent = await listRecentDocuments();
+      expect(firstRecent[0]).toMatchObject({
+        path: documentPath,
+        name: "Margent Quickstart.md",
+        exists: true
+      });
+      await expect(fs.readFile(documentPath, "utf8")).resolves.toBe("# Quickstart\n");
+
+      await fs.rm(documentPath);
+      const secondRecent = await listRecentDocuments();
+      expect(secondRecent[0]).toMatchObject({
+        path: documentPath,
+        exists: false
+      });
+      await expect(fs.access(documentPath)).rejects.toThrow();
+    } finally {
+      if (previousAppDataDir === undefined) {
+        delete process.env.MARGENT_APP_DATA_DIR;
+      } else {
+        process.env.MARGENT_APP_DATA_DIR = previousAppDataDir;
+      }
+      if (previousDisableQuickstart === undefined) {
+        delete process.env.MARGENT_DISABLE_QUICKSTART_RECENT;
+      } else {
+        process.env.MARGENT_DISABLE_QUICKSTART_RECENT = previousDisableQuickstart;
+      }
+      if (previousTemplatePath === undefined) {
+        delete process.env.MARGENT_QUICKSTART_TEMPLATE_PATH;
+      } else {
+        process.env.MARGENT_QUICKSTART_TEMPLATE_PATH = previousTemplatePath;
+      }
+      if (previousDocumentPath === undefined) {
+        delete process.env.MARGENT_QUICKSTART_DOCUMENT_PATH;
+      } else {
+        process.env.MARGENT_QUICKSTART_DOCUMENT_PATH = previousDocumentPath;
+      }
+      await fs.rm(appDataDir, { recursive: true, force: true });
+      await fs.rm(quickstartDir, { recursive: true, force: true });
     }
   });
 });

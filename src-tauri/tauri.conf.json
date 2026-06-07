@@ -29,6 +29,7 @@
     "externalBin": ["binaries/margent-server"],
     "resources": {
       "../dist": "_up_/dist",
+      "../examples": "_up_/examples",
       "../node_modules": "_up_/node_modules",
       "resources/node": "resources/node",
       "resources/en.lproj": "en.lproj",

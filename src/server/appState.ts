@@ -3,13 +3,24 @@ import fsSync from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   AppSettings,
   RecentDocument
 } from "../shared/appSettingsTypes.js";
 
 const MAX_RECENT_DOCUMENTS = 12;
+const QUICKSTART_TEMPLATE_NAME = "Margent Quickstart.md";
+const QUICKSTART_TEMPLATE_VERSION = 1;
 const appStateMutationQueues = new Map<string, Promise<unknown>>();
+
+type StoredRecentDocument = Omit<RecentDocument, "exists">;
+
+type QuickstartState = {
+  initializedAt: string;
+  documentPath: string;
+  templateVersion: number;
+};
 
 const DEFAULT_SETTINGS: AppSettings = {
   language: "system",
@@ -35,26 +46,16 @@ export async function saveAppSettings(next: Partial<AppSettings>): Promise<AppSe
 }
 
 export async function listRecentDocuments(): Promise<RecentDocument[]> {
-  const stored = await readJson<Array<Omit<RecentDocument, "exists">>>(
-    getRecentDocumentsPath(),
-    []
-  );
-
-  return stored
-    .filter((item) => typeof item.path === "string" && item.path.trim())
-    .slice(0, MAX_RECENT_DOCUMENTS)
-    .map((item) => ({
-      path: item.path,
-      name: item.name || path.basename(item.path),
-      lastOpenedAt: item.lastOpenedAt,
-      exists: fsSync.existsSync(item.path)
-    }));
+  await ensureQuickstartRecentDocument();
+  const stored = await readRecentDocumentEntries();
+  return normalizeRecentDocuments(stored);
 }
 
 export async function rememberRecentDocument(documentPath: string): Promise<void> {
+  await ensureQuickstartRecentDocument();
   const recentDocumentsPath = getRecentDocumentsPath();
   await withAppStateMutation(recentDocumentsPath, async () => {
-    const existing = await listRecentDocuments();
+    const existing = await readRecentDocumentEntries();
     const normalizedPath = path.resolve(documentPath);
     const next = [
       {
@@ -76,10 +77,11 @@ export async function rememberRecentDocument(documentPath: string): Promise<void
 }
 
 export async function removeRecentDocument(documentPath: string): Promise<RecentDocument[]> {
+  await ensureQuickstartRecentDocument();
   const recentDocumentsPath = getRecentDocumentsPath();
   return withAppStateMutation(recentDocumentsPath, async () => {
     const normalizedPath = path.resolve(documentPath);
-    const existing = await listRecentDocuments();
+    const existing = await readRecentDocumentEntries();
     const next = existing
       .filter((item) => path.resolve(item.path) !== normalizedPath)
       .map(({ path: itemPath, name, lastOpenedAt }) => ({
@@ -89,8 +91,117 @@ export async function removeRecentDocument(documentPath: string): Promise<Recent
       }));
 
     await writeJson(recentDocumentsPath, next);
-    return listRecentDocuments();
+    return normalizeRecentDocuments(next);
   });
+}
+
+async function readRecentDocumentEntries(): Promise<StoredRecentDocument[]> {
+  return readJson<StoredRecentDocument[]>(getRecentDocumentsPath(), []);
+}
+
+function normalizeRecentDocuments(stored: StoredRecentDocument[]): RecentDocument[] {
+  return stored
+    .filter((item) => typeof item.path === "string" && item.path.trim())
+    .slice(0, MAX_RECENT_DOCUMENTS)
+    .map((item) => ({
+      path: item.path,
+      name: item.name || path.basename(item.path),
+      lastOpenedAt: item.lastOpenedAt,
+      exists: fsSync.existsSync(item.path)
+    }));
+}
+
+async function ensureQuickstartRecentDocument(): Promise<void> {
+  if (process.env.MARGENT_DISABLE_QUICKSTART_RECENT === "1") {
+    return;
+  }
+
+  const statePath = getQuickstartStatePath();
+  const existingState = await readJson<Partial<QuickstartState>>(statePath, {});
+  if (
+    existingState.templateVersion === QUICKSTART_TEMPLATE_VERSION &&
+    typeof existingState.documentPath === "string"
+  ) {
+    return;
+  }
+
+  const templatePath = findQuickstartTemplatePath();
+  if (!templatePath) {
+    return;
+  }
+
+  const documentPath = path.resolve(getQuickstartDocumentPath());
+  const recentDocumentsPath = getRecentDocumentsPath();
+  try {
+    await withAppStateMutation(recentDocumentsPath, async () => {
+      const latestState = await readJson<Partial<QuickstartState>>(statePath, {});
+      if (
+        latestState.templateVersion === QUICKSTART_TEMPLATE_VERSION &&
+        typeof latestState.documentPath === "string"
+      ) {
+        return;
+      }
+
+      await fs.mkdir(path.dirname(documentPath), { recursive: true });
+      try {
+        await fs.copyFile(templatePath, documentPath, fsSync.constants.COPYFILE_EXCL);
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== "EEXIST") {
+          throw error;
+        }
+      }
+
+      const existing = await readRecentDocumentEntries();
+      const alreadyListed = existing.some((item) => path.resolve(item.path) === documentPath);
+      if (!alreadyListed) {
+        await writeJson(
+          recentDocumentsPath,
+          [
+            {
+              path: documentPath,
+              name: QUICKSTART_TEMPLATE_NAME,
+              lastOpenedAt: new Date().toISOString()
+            },
+            ...existing
+          ].slice(0, MAX_RECENT_DOCUMENTS)
+        );
+      }
+
+      await writeJson(statePath, {
+        initializedAt: new Date().toISOString(),
+        documentPath,
+        templateVersion: QUICKSTART_TEMPLATE_VERSION
+      } satisfies QuickstartState);
+    });
+  } catch (error) {
+    console.warn(
+      `Unable to initialize Margent Quickstart: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+function findQuickstartTemplatePath(): string | null {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    process.env.MARGENT_QUICKSTART_TEMPLATE_PATH,
+    path.resolve(moduleDir, "..", "..", "examples", QUICKSTART_TEMPLATE_NAME),
+    path.resolve(process.cwd(), "examples", QUICKSTART_TEMPLATE_NAME)
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find((candidate) => fsSync.existsSync(candidate)) ?? null;
+}
+
+function getQuickstartDocumentPath(): string {
+  return (
+    process.env.MARGENT_QUICKSTART_DOCUMENT_PATH ??
+    path.join(os.homedir(), "Documents", "Margent", QUICKSTART_TEMPLATE_NAME)
+  );
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function normalizeSettings(value: Partial<AppSettings>): AppSettings {
@@ -160,6 +271,10 @@ function getSettingsPath(): string {
 
 function getRecentDocumentsPath(): string {
   return path.join(getAppDataDir(), "recent-documents.json");
+}
+
+function getQuickstartStatePath(): string {
+  return path.join(getAppDataDir(), "quickstart.json");
 }
 
 function getAppDataDir(): string {

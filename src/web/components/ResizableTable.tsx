@@ -12,6 +12,7 @@ import {
   type ReactElement,
   type ReactNode
 } from "react";
+import { useI18n } from "../i18n";
 
 const DEFAULT_COLUMN_WIDTH = 180;
 const MIN_COLUMN_WIDTH = 96;
@@ -33,6 +34,7 @@ type TableElementProps = {
 };
 
 export function ResizableTable({ children }: ResizableTableProps) {
+  const { t } = useI18n();
   const columnCount = useMemo(() => getColumnCount(children), [children]);
   const [columnWidths, setColumnWidths] = useState(() => createDefaultWidths(columnCount));
   const dragRef = useRef<DragState | null>(null);
@@ -106,8 +108,10 @@ export function ResizableTable({ children }: ResizableTableProps) {
   }, []);
 
   const enhancedChildren = useMemo(
-    () => addResizeHandles(children, startResize, resizeByKeyboard),
-    [children, resizeByKeyboard, startResize]
+    () => addResizeHandles(children, startResize, resizeByKeyboard, (index) =>
+      t("table.resizeColumn", { index: index + 1 })
+    ),
+    [children, resizeByKeyboard, startResize, t]
   );
   const tableWidth = columnWidths.reduce((sum, width) => sum + width, 0);
 
@@ -156,7 +160,8 @@ function getColumnCount(children: ReactNode): number {
 function addResizeHandles(
   children: ReactNode,
   onPointerDown: (index: number, event: ReactPointerEvent<HTMLSpanElement>) => void,
-  onKeyDown: (index: number, event: KeyboardEvent<HTMLSpanElement>) => void
+  onKeyDown: (index: number, event: KeyboardEvent<HTMLSpanElement>) => void,
+  getResizeLabel: (index: number) => string
 ): ReactNode {
   let headerCellIndex = 0;
 
@@ -175,7 +180,7 @@ function addResizeHandles(
       <>
         <span className="resizable-table-header-content">{mappedChildren}</span>
         <span
-          aria-label={`Resize column ${index + 1}`}
+          aria-label={getResizeLabel(index)}
           className="table-resize-handle"
           onKeyDown={(event) => onKeyDown(index, event)}
           onPointerDown={(event) => onPointerDown(index, event)}

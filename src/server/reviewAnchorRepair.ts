@@ -175,7 +175,7 @@ function findAnchorCandidates(
     candidates.push(...findTextCandidates(allBlocks, text, candidates));
   }
 
-  if (candidates.length === 0 && anchor.kind === "text") {
+  if (candidates.length === 0 && (anchor.kind === "text" || anchor.kind === "range")) {
     candidates.push(...findContextCandidates(context.next.blocks, anchor));
   }
 
@@ -219,7 +219,10 @@ function findTextCandidates(
   return found;
 }
 
-function findContextCandidates(blocks: MarkdownBlock[], anchor: Extract<ReviewAnchor, { kind: "text" }>): AnchorCandidate[] {
+function findContextCandidates(
+  blocks: MarkdownBlock[],
+  anchor: Extract<ReviewAnchor, { kind: "text" | "range" }>
+): AnchorCandidate[] {
   const prefix = anchor.prefix?.trim();
   const suffix = anchor.suffix?.trim();
   if (!prefix && !suffix) {
@@ -368,6 +371,21 @@ function updateAnchorFromCandidate(
       candidate.absoluteEnd,
       candidate.absoluteEnd + CONTEXT_CHARS
     );
+  } else if (anchor.kind === "range") {
+    anchor.startBlockId = candidate.block.id;
+    anchor.startBlockIndex = candidate.block.index;
+    anchor.startOffset = candidate.startOffset;
+    anchor.endBlockId = candidate.block.id;
+    anchor.endBlockIndex = candidate.block.index;
+    anchor.endOffset = candidate.endOffset;
+    anchor.prefix = context.nextMarkdown.slice(
+      Math.max(0, candidate.absoluteStart - CONTEXT_CHARS),
+      candidate.absoluteStart
+    );
+    anchor.suffix = context.nextMarkdown.slice(
+      candidate.absoluteEnd,
+      candidate.absoluteEnd + CONTEXT_CHARS
+    );
   }
 
   setRepairMeta(anchor, {
@@ -395,7 +413,12 @@ function ensureAnchorDefaults(anchor: ReviewAnchor): void {
     anchor.originalSelectedText = anchor.selectedText;
   }
   if (!anchor.anchorPrecision) {
-    anchor.anchorPrecision = anchor.kind === "text" ? "exact" : anchor.kind === "document" ? "heading" : "block";
+    anchor.anchorPrecision =
+      anchor.kind === "text" || anchor.kind === "range"
+        ? "exact"
+        : anchor.kind === "document"
+          ? "heading"
+          : "block";
   }
 }
 
@@ -627,11 +650,11 @@ function getAnchorBlockIndex(anchor: ReviewAnchor): number | undefined {
 }
 
 function getAnchorPrefix(anchor: ReviewAnchor): string | undefined {
-  return anchor.kind === "text" ? anchor.prefix : undefined;
+  return anchor.kind === "text" || anchor.kind === "range" ? anchor.prefix : undefined;
 }
 
 function getAnchorSuffix(anchor: ReviewAnchor): string | undefined {
-  return anchor.kind === "text" ? anchor.suffix : undefined;
+  return anchor.kind === "text" || anchor.kind === "range" ? anchor.suffix : undefined;
 }
 
 function candidateKey(candidate: AnchorCandidate): string {

@@ -188,7 +188,8 @@ export async function dispatchReviewEvents(
     documentPath: markdownPath,
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
-    targetType: target.type
+    targetType: target.type,
+    triggerReplyId: queuedEvent.triggerReplyId
   });
   const result = await adapter.sendToThread({
     threadId: target.threadId,
@@ -276,9 +277,24 @@ export function createBridgePrompt(input: {
   annotationId: string;
   eventId: string;
   targetType: CodexTargetType;
+  triggerReplyId?: string;
 }): string {
+  const isFollowup = Boolean(input.triggerReplyId);
+  const contextCall = [
+    "   reviewer_get_annotation_context({",
+    `     documentPath: ${JSON.stringify(input.documentPath)},`,
+    input.triggerReplyId
+      ? `     annotationId: ${JSON.stringify(input.annotationId)},`
+      : `     annotationId: ${JSON.stringify(input.annotationId)}`,
+    ...(input.triggerReplyId
+      ? [`     triggerReplyId: ${JSON.stringify(input.triggerReplyId)}`]
+      : []),
+    "   })"
+  ];
   const base = [
-    "Margent 有一条新的批注任务需要处理。",
+    isFollowup
+      ? "Margent 有一条新的批注追问需要处理。"
+      : "Margent 有一条新的批注任务需要处理。",
     "",
     "文档路径：",
     input.documentPath,
@@ -289,6 +305,13 @@ export function createBridgePrompt(input: {
     "事件 ID：",
     input.eventId,
     "",
+    ...(input.triggerReplyId
+      ? [
+          "触发回复 ID：",
+          input.triggerReplyId,
+          ""
+        ]
+      : []),
     "目标会话类型：",
     input.targetType,
     "",
@@ -299,23 +322,30 @@ export function createBridgePrompt(input: {
     "   - 目标是加载 Margent MCP 的批注读取、回复、文档编辑和事件标记工具。",
     "",
     "1. 调用 Margent MCP 读取这条批注：",
-    "   reviewer_get_annotation_context({",
-    `     documentPath: ${JSON.stringify(input.documentPath)},`,
-    `     annotationId: ${JSON.stringify(input.annotationId)}`,
-    "   })",
+    ...contextCall,
     "",
-    "2. 根据批注内容判断处理方式：",
-    "   - 如果是提问型批注：直接回复批注。",
-    "   - 如果是明确修改型批注：修改 Markdown 正文，并回复处理说明。",
-    "   - 如果修改目标或意图不明确：只回复讨论或澄清问题，不擅自改正文。",
+    ...(isFollowup
+      ? [
+          "2. 这是用户对 Codex 回复发起的继续回复：",
+          "   - context.triggerReply 是本轮任务的主要用户意图。",
+          "   - 父级批注、原始选中文本、文档局部上下文和全部历史回复用于理解背景。",
+          "   - 不要把父级批注当成一条新的待处理问题重复处理，除非 triggerReply 明确要求重新处理。"
+        ]
+      : [
+          "2. 根据批注内容判断处理方式：",
+          "   - 如果是提问型批注：直接回复批注。",
+          "   - 如果是明确修改型批注：修改 Markdown 正文，并回复处理说明。",
+          "   - 如果修改目标或意图不明确：只回复讨论或澄清问题，不擅自改正文。"
+        ]),
     "",
     "3. 如果修改了正文，请保存文档，并让 Reviewer 重新标记批注锚点在修改后的文本上。",
     "",
     "4. 如果这条批注已经处理完成，可以按需要标记为 resolved。",
     "",
-    `5. 完成后，调用 reviewer_mark_review_event_handled({ eventId: ${JSON.stringify(
-      input.eventId
-    )} })。`,
+    "5. 完成后，调用 reviewer_mark_review_event_handled({",
+    `   documentPath: ${JSON.stringify(input.documentPath)},`,
+    `   eventId: ${JSON.stringify(input.eventId)}`,
+    "})。",
     "",
     "注意：",
     "- 不要要求用户把整份 Markdown 粘贴到对话里。",
@@ -344,14 +374,34 @@ async function getCurrentTarget(markdownPath: string): Promise<CodexTargetRefere
   return resolveCodexTarget(link);
 }
 
-async function resolveEventTarget(
+export async function resolveEventTarget(
   markdownPath: string,
   event: ReviewEvent
 ): Promise<CodexTargetReference | null> {
   if (event.targetThreadId && event.targetType) {
+    const eventCwd =
+      event.targetCwd ??
+      (event.targetType === "source" && event.targetThreadId === event.sourceThreadId
+        ? event.sourceCwd
+        : undefined);
+    if (eventCwd) {
+      return {
+        type: event.targetType,
+        threadId: event.targetThreadId,
+        cwd: eventCwd
+      };
+    }
+
+    const currentTarget = await getCurrentTarget(markdownPath);
+    const currentCwd =
+      currentTarget?.threadId === event.targetThreadId &&
+      currentTarget.type === event.targetType
+        ? currentTarget.cwd
+        : undefined;
     return {
       type: event.targetType,
-      threadId: event.targetThreadId
+      threadId: event.targetThreadId,
+      cwd: event.targetCwd ?? currentCwd
     };
   }
 

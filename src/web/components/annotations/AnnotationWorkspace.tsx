@@ -344,10 +344,13 @@ export function AnnotationWorkspace({
     };
   }, [captureSelection, isEditing]);
 
-  const selectAnnotation = (annotationId: string) => {
+  const selectAnnotation = (annotationId: string, options: { scroll?: boolean } = {}) => {
     setIsSidebarOpen(true);
     void reloadCodexLink();
     review.setSelectedAnnotationId(annotationId);
+    if (options.scroll === false) {
+      return;
+    }
     const annotation = annotations.find((item) => item.id === annotationId);
     const container = contentRef.current;
     if (annotation && container) {
@@ -695,6 +698,7 @@ export function AnnotationWorkspace({
             />
             <AnnotationSelectionToolbar
               draft={draft}
+              trackSelection
               onCancel={() => setDraft(null)}
               onCreate={async (body) => {
                 if (!draft) {

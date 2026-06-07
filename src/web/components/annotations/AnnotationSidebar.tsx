@@ -117,7 +117,7 @@ export function AnnotationSidebar({
     <aside className="annotation-sidebar" aria-label={t("annotation.title")}>
       <div className="annotation-sidebar-header">
         <div>
-          <span className="annotation-sidebar-kicker">Review</span>
+          <span className="annotation-sidebar-kicker">{t("annotation.kicker")}</span>
           <h2>{t("annotation.title")}</h2>
         </div>
         <div className="annotation-sidebar-header-actions">
@@ -443,9 +443,12 @@ function AnnotationCard({
   const [replyTarget, setReplyTarget] = useState<ReplyTargetDraft | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isReplySaving, setIsReplySaving] = useState(false);
+  const [savingReplyEditId, setSavingReplyEditId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isDeleteArmed, setIsDeleteArmed] = useState(false);
   const deleteButtonRef = useRef<HTMLButtonElement | null>(null);
+  const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sortedReplies = useMemo(
     () =>
       [...annotation.replies].sort(
@@ -458,6 +461,7 @@ function AnnotationCard({
     isSelected && (isReplying || annotation.replies.length > 0 || localError);
   const hasFailedEvent = event?.deliveryStatus === "failed";
   const eventBadge = getAnnotationEventBadge(event, t);
+  const hasPendingOperation = isSaving || isReplySaving || savingReplyEditId !== null;
 
   useEffect(() => {
     setAnnotationDraft(annotation.body);
@@ -493,6 +497,23 @@ function AnnotationCard({
       document.removeEventListener("pointerdown", handlePointerDown, true);
     };
   }, [isDeleteArmed]);
+
+  useEffect(() => {
+    if (!isReplying) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      replyTextareaRef.current?.focus({ preventScroll: true });
+      replyTextareaRef.current?.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "smooth"
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isReplying, replyTarget?.replyId]);
 
   const run = async (action: () => Promise<void>) => {
     setIsSaving(true);
@@ -556,31 +577,47 @@ function AnnotationCard({
   const submitReply = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const body = replyDraft.trim();
-    if (!body) {
+    if (!body || isReplySaving || isSaving || savingReplyEditId) {
       return;
     }
-    void run(async () => {
-      await onReply(annotation.id, {
-        body,
-        author: { type: "user", name: "User" },
-        replyToReplyId: replyTarget?.replyId
-      });
-      setReplyDraft("");
-      setReplyTarget(null);
-      setIsReplying(false);
-    });
+    setIsReplySaving(true);
+    setLocalError(null);
+    void (async () => {
+      try {
+        await onReply(annotation.id, {
+          body,
+          author: { type: "user", name: "User" },
+          replyToReplyId: replyTarget?.replyId
+        });
+        setReplyDraft("");
+        setReplyTarget(null);
+        setIsReplying(false);
+      } catch (error) {
+        setLocalError(error instanceof Error ? error.message : t("annotation.operationFailed"));
+      } finally {
+        setIsReplySaving(false);
+      }
+    })();
   };
 
   const submitReplyEdit = (event: FormEvent<HTMLFormElement>, replyId: string) => {
     event.preventDefault();
     const body = replyDrafts[replyId]?.trim();
-    if (!body) {
+    if (!body || isSaving || isReplySaving || savingReplyEditId) {
       return;
     }
-    void run(async () => {
-      await onEditReply(annotation.id, replyId, { body });
-      setEditingReplyId(null);
-    });
+    setSavingReplyEditId(replyId);
+    setLocalError(null);
+    void (async () => {
+      try {
+        await onEditReply(annotation.id, replyId, { body });
+        setEditingReplyId(null);
+      } catch (error) {
+        setLocalError(error instanceof Error ? error.message : t("annotation.operationFailed"));
+      } finally {
+        setSavingReplyEditId(null);
+      }
+    })();
   };
 
   const sendToCodex = () => {
@@ -673,7 +710,7 @@ function AnnotationCard({
             aria-label={t("annotation.retryDelivery")}
             title={t("annotation.retryDelivery")}
             onClick={retryEvent}
-            disabled={isSaving}
+            disabled={hasPendingOperation}
           >
             <RotateCcw size={14} />
           </button>
@@ -697,7 +734,7 @@ function AnnotationCard({
               isDeleteArmed ? " annotation-card-action-confirm" : ""
             }`}
             onClick={removeAnnotation}
-            disabled={isSaving}
+            disabled={hasPendingOperation}
             aria-label={isDeleteArmed ? t("annotation.confirmDelete") : t("annotation.delete")}
             title={isDeleteArmed ? t("annotation.deleteAgain") : t("annotation.delete")}
           >
@@ -717,9 +754,9 @@ function AnnotationCard({
             <Pencil size={13} />
             {t("annotation.edit")}
           </button>
-          <button type="button" onClick={sendToCodex} disabled={isSaving}>
+          <button type="button" onClick={sendToCodex} disabled={hasPendingOperation}>
             <AtSign size={13} />
-            Codex
+            {t("annotation.sendCodex")}
           </button>
         </div>
       ) : null}
@@ -778,7 +815,11 @@ function AnnotationCard({
                           aria-label={t("annotation.editReplyBody")}
                         />
                         <InlineFormActions
-                          isSaving={isSaving}
+                          isSaving={savingReplyEditId === reply.id}
+                          isSubmitDisabled={
+                            !replyDrafts[reply.id]?.trim() ||
+                            (hasPendingOperation && savingReplyEditId !== reply.id)
+                          }
                           primaryLabel={t("annotation.save")}
                           onCancel={() => {
                             setReplyDrafts((current) => ({
@@ -813,13 +854,15 @@ function AnnotationCard({
                 </div>
               ) : null}
               <textarea
+                ref={replyTextareaRef}
                 value={replyDraft}
                 onChange={(event) => setReplyDraft(event.target.value)}
                 placeholder={replyTarget ? t("annotation.replyToReply") : t("annotation.replyToAnnotation")}
                 aria-label={t("annotation.replyToAnnotation")}
               />
               <InlineFormActions
-                isSaving={isSaving}
+                isSaving={isReplySaving}
+                isSubmitDisabled={!replyDraft.trim() || (hasPendingOperation && !isReplySaving)}
                 primaryLabel={t("annotation.send")}
                 primaryIcon={<Send size={13} />}
                 onCancel={() => {
@@ -838,11 +881,13 @@ function AnnotationCard({
 
 function InlineFormActions({
   isSaving,
+  isSubmitDisabled = false,
   primaryLabel,
   primaryIcon,
   onCancel
 }: {
   isSaving: boolean;
+  isSubmitDisabled?: boolean;
   primaryLabel: string;
   primaryIcon?: ReactNode;
   onCancel: () => void;
@@ -854,7 +899,7 @@ function InlineFormActions({
         <X size={13} />
         {t("annotation.cancel")}
       </button>
-      <button type="submit" disabled={isSaving}>
+      <button type="submit" disabled={isSaving || isSubmitDisabled}>
         {primaryIcon ?? <Check size={13} />}
         {isSaving ? t("annotation.processing") : primaryLabel}
       </button>

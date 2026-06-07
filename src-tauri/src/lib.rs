@@ -56,6 +56,33 @@ fn opened_files(app: AppHandle) -> Vec<String> {
     opened
 }
 
+#[tauri::command]
+fn write_clipboard_text(text: String) -> Result<(), String> {
+    let mut child = std::process::Command::new("/usr/bin/pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Unable to open clipboard: {error}"))?;
+
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Unable to write clipboard input.".to_string())?;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|error| format!("Unable to write clipboard text: {error}"))?;
+    }
+
+    let status = child
+        .wait()
+        .map_err(|error| format!("Unable to finish clipboard write: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Clipboard write was rejected.".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -72,9 +99,7 @@ pub fn run() {
                 push_opened_files(app, paths);
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
-            }
+            focus_main_window(app);
         }));
     }
 
@@ -94,7 +119,11 @@ pub fn run() {
             }
             _ => {}
         })
-        .invoke_handler(tauri::generate_handler![opened_files, open_settings_window])
+        .invoke_handler(tauri::generate_handler![
+            opened_files,
+            open_settings_window,
+            write_clipboard_text
+        ])
         .setup(|app| {
             let app_handle = app.handle().clone();
             register_native_settings_listener(&app_handle);
@@ -119,6 +148,7 @@ pub fn run() {
                     .collect::<Vec<_>>();
                 if !paths.is_empty() {
                     push_opened_files(app, paths);
+                    focus_main_window(app);
                 }
             }
             RunEvent::ExitRequested { .. } => {
@@ -464,7 +494,7 @@ fn open_main_window(app: &AppHandle, server_url: &str) -> tauri::Result<()> {
     let url = format!("{}/?desktopToken={}", server_url, state.token);
     if let Some(window) = app.get_webview_window("main") {
         window.eval(&format!("window.location.href = {}", json_string(&url)))?;
-        window.set_focus()?;
+        focus_main_window(app);
         return Ok(());
     }
 
@@ -485,7 +515,9 @@ fn open_main_window(app: &AppHandle, server_url: &str) -> tauri::Result<()> {
             .hidden_title(true);
     }
 
-    window_builder.build()?;
+    let window = window_builder.build()?;
+    window.show()?;
+    window.set_focus()?;
 
     Ok(())
 }
@@ -529,12 +561,13 @@ fn push_opened_files(app: &AppHandle, paths: Vec<String>) {
         .extend(paths.clone());
     sync_opened_files_to_server(app, paths.clone(), false);
     let _ = app.emit("desktop-open-files", paths);
+    focus_main_window(app);
 }
 
 fn sync_opened_files_to_server(app: &AppHandle, paths: Vec<String>, reload_after_sync: bool) {
-    let Some(path) = paths.first().cloned() else {
+    if paths.is_empty() {
         return;
-    };
+    }
 
     let state = app.state::<DesktopState>();
     let server_url = state
@@ -549,9 +582,10 @@ fn sync_opened_files_to_server(app: &AppHandle, paths: Vec<String>, reload_after
     let app_handle = app.clone();
 
     std::thread::spawn(move || {
-        if let Err(error) = post_open_document(&server_url, &token, &path) {
-            eprintln!("failed to sync opened document: {error}");
-            return;
+        for path in paths {
+            if let Err(error) = post_open_document(&server_url, &token, &path) {
+                eprintln!("failed to sync opened document: {error}");
+            }
         }
 
         if reload_after_sync {
@@ -563,6 +597,14 @@ fn sync_opened_files_to_server(app: &AppHandle, paths: Vec<String>, reload_after
 fn reload_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.eval("window.location.reload()");
+        focus_main_window(app);
+    }
+}
+
+fn focus_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
         let _ = window.set_focus();
     }
 }
