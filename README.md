@@ -149,7 +149,7 @@ npm run check:release
 
 ## License
 
-License information has not been added yet.
+Margent is released under the MIT License. See [LICENSE](LICENSE).
 
 ---
 
@@ -304,4 +304,4 @@ npm run check:release
 
 ## 许可证
 
-许可证信息尚未补充。
+Margent 使用 MIT License 开源。详见 [LICENSE](LICENSE)。
