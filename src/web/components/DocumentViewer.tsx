@@ -6,6 +6,7 @@ import {
   Suspense,
   useEffect,
   useState,
+  type MouseEvent,
   type ReactNode
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -146,6 +147,14 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
       );
     },
     a({ children, href }) {
+      if (href?.startsWith("#")) {
+        return (
+          <a href={href} onClick={(event) => scrollToDocumentHash(event, href)}>
+            {children}
+          </a>
+        );
+      }
+
       return (
         <a href={href} target="_blank" rel="noreferrer">
           {children}
@@ -241,6 +250,31 @@ function getDirectImageSrc(src: string | undefined): string | null {
   }
 
   return null;
+}
+
+function scrollToDocumentHash(event: MouseEvent<HTMLAnchorElement>, href: string): void {
+  const targetId = decodeHashId(href);
+  if (!targetId) {
+    return;
+  }
+
+  const target = document.getElementById(targetId);
+  if (!target) {
+    return;
+  }
+
+  event.preventDefault();
+  target.scrollIntoView({ block: "start", behavior: "smooth" });
+  window.history.replaceState(null, "", `#${encodeURIComponent(targetId)}`);
+}
+
+function decodeHashId(href: string): string {
+  const rawHash = href.startsWith("#") ? href.slice(1) : href;
+  try {
+    return decodeURIComponent(rawHash);
+  } catch {
+    return rawHash;
+  }
 }
 
 function stringifyReactNode(node: ReactNode): string {

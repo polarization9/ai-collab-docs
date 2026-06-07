@@ -41,6 +41,49 @@ test("P1 reading enhancements expose TOC, code, Mermaid, table, and local images
   }
 });
 
+test("P1 in-document markdown hash links scroll to headings", async ({ page }, testInfo) => {
+  const app = await startMargentE2e(testInfo);
+  try {
+    await fs.writeFile(
+      app.fixture.markdownPath,
+      `# Margent
+
+[中文说明](#中文说明)
+
+Margent is a local-first Markdown app.
+
+${Array.from({ length: 24 }, (_, index) => `Filler paragraph ${index + 1}.`).join("\n\n")}
+
+# 中文说明
+
+这里是中文说明。
+`,
+      "utf8"
+    );
+
+    await app.open(page);
+    await expect(page.getByRole("heading", { name: "Margent" })).toBeVisible();
+
+    await page.getByRole("link", { name: "中文说明" }).click();
+
+    await expect.poll(async () => page.evaluate(() => window.location.hash)).toContain(
+      encodeURIComponent("中文说明")
+    );
+    await expect
+      .poll(async () =>
+        page.evaluate(() => document.getElementById("中文说明")?.getBoundingClientRect().top ?? -1)
+      )
+      .toBeGreaterThanOrEqual(0);
+    await expect
+      .poll(async () =>
+        page.evaluate(() => document.getElementById("中文说明")?.getBoundingClientRect().top ?? -1)
+      )
+      .toBeLessThan(120);
+  } finally {
+    await app.cleanup();
+  }
+});
+
 test("P1 annotation sidebar handles Codex state, agent replies, reopen, and delete confirmation", async ({
   page
 }, testInfo) => {
