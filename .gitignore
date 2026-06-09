@@ -1,0 +1,30 @@
+node_modules/
+dist/
+artifacts/
+test-results/
+playwright-report/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+src-tauri/resources/node/
+src-tauri/resources/node/
+.DS_Store
+npm-debug.log*
+outputs/
+docs/*.review.json
+docs/*.codex.json
+PRODUCT.md
+DESIGN.md
+.impeccable/
+examples/design.md
+src/web/prototypes/
+docs/*PRD.md
+docs/*技术方案.md
+docs/*Feature List.md
+docs/*设计方案.md
+docs/*设计规范.md
+docs/*测试计划.md
+docs/Margent Mermaid 与阅读增强方案.md
+docs/Margent 新用户初始化与示例文档方案.md
+docs/Margent 产品介绍.md
+docs/assets/*prototype.svg

@@ -1,0 +1,62 @@
+{
+  "name": "margent",
+  "version": "0.1.1",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "margent": "./dist/cli.js",
+    "margent-mcp": "./dist/mcpCli.js"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx src/cli.ts --desktop-server --port 4317 --dev",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "check:i18n-copy": "node scripts/check-i18n-copy.mjs",
+    "check:release": "npm run typecheck && npm run check:i18n-copy && npm run tauri:build && git diff --check",
+    "desktop:runtime": "node scripts/build-desktop-runtime.mjs",
+    "desktop:sidecar": "npm run build:server && npm run desktop:runtime && node scripts/build-desktop-sidecar.mjs",
+    "tauri:dev": "npm run desktop:sidecar && PATH=\"$HOME/.cargo/bin:$PATH\" tauri dev",
+    "tauri:build": "npm run build && npm run desktop:sidecar && PATH=\"$HOME/.cargo/bin:$PATH\" tauri build"
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/search": "^6.7.0",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
+    "@tauri-apps/plugin-deep-link": "^2.4.9",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@vitejs/plugin-react": "^5.1.1",
+    "codemirror": "^6.0.2",
+    "concurrently": "^9.2.1",
+    "express": "^5.2.1",
+    "github-slugger": "^2.0.0",
+    "lucide-react": "^1.17.0",
+    "mermaid": "^11.12.1",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.10.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
