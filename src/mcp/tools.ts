@@ -349,7 +349,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
     {
       title: "Apply Document Edit",
       description:
-        "Replace the current Markdown document content with edited Markdown. Use this only when the requested document change is clear. If this edit handles an annotation, pass annotationId and preferredSelectedText so the annotation can be re-anchored to the modified text. You may also pass replyBody and resolveAnnotation=true when the edit fully resolves the annotation.",
+        "Replace the current Markdown document content with edited Markdown. Use this only when the requested document change is clear. If this edit handles an annotation, pass annotationId and preferredSelectedText so the annotation can be re-anchored to the modified text. You may also pass replyBody and resolveAnnotation=true when the edit fully resolves the annotation. If this edit is handling a review event, pass eventId so Margent can mark that event handled when resolving.",
       inputSchema: {
         documentPath: z.string().min(1).optional().describe("Optional Markdown path."),
         content: z.string().describe("The full edited Markdown content to save."),
@@ -368,6 +368,11 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           .min(1)
           .optional()
           .describe("Optional agent reply to append after saving the edit."),
+        eventId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional review event id to mark handled when resolveAnnotation is true."),
         resolveAnnotation: z
           .boolean()
           .optional()
@@ -380,13 +385,14 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         openWorldHint: false
       }
     },
-    async ({ documentPath, content, annotationId, preferredSelectedText, replyBody, resolveAnnotation }) =>
+    async ({ documentPath, content, annotationId, preferredSelectedText, replyBody, eventId, resolveAnnotation }) =>
       jsonToolResult(
         await applyDocumentEditPayload(resolveToolMarkdownPath(markdownPath, documentPath), {
           content,
           annotationId,
           preferredSelectedText,
           replyBody,
+          eventId,
           resolveAnnotation
         })
       )
@@ -397,11 +403,16 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
     {
       title: "Update Annotation Status",
       description:
-        "Set an annotation to open or resolved. Mark resolved only after you have answered it or completed the requested change; reopen as open when the discussion should continue.",
+        "Set an annotation to open or resolved. Mark resolved only after you have answered it or completed the requested change; reopen as open when the discussion should continue. If this status update is handling a review event, pass eventId so Margent can mark that event handled in the same write.",
       inputSchema: {
         documentPath: z.string().min(1).optional().describe("Optional Markdown path."),
         annotationId: z.string().min(1).describe("Annotation id to update."),
-        status: z.enum(ANNOTATION_STATUS_VALUES).describe("New annotation status.")
+        status: z.enum(ANNOTATION_STATUS_VALUES).describe("New annotation status."),
+        eventId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional review event id to mark handled when status is resolved.")
       },
       annotations: {
         readOnlyHint: false,
@@ -410,9 +421,9 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         openWorldHint: false
       }
     },
-    async ({ documentPath, annotationId, status }) =>
+    async ({ documentPath, annotationId, status, eventId }) =>
       jsonToolResult(
-        await updateStatusPayload(resolveToolMarkdownPath(markdownPath, documentPath), annotationId, status)
+        await updateStatusPayload(resolveToolMarkdownPath(markdownPath, documentPath), annotationId, status, eventId)
       )
   );
 
@@ -777,6 +788,7 @@ async function applyDocumentEditPayload(
     preferredSelectedText?: string;
     replyBody?: string;
     resolveAnnotation?: boolean;
+    eventId?: string;
   }
 ): Promise<ToolResultPayload> {
   const currentDocument = await loadReviewDocument(markdownPath);
@@ -802,7 +814,8 @@ async function applyDocumentEditPayload(
 
   if (input.annotationId && input.resolveAnnotation) {
     const review = await updateAnnotationStatus(markdownPath, input.annotationId, {
-      status: "resolved"
+      status: "resolved",
+      eventId: input.eventId
     });
     response = { ...response, review };
   }
@@ -828,17 +841,24 @@ async function applyDocumentEditPayload(
       updatedAt: response.review.updatedAt,
       annotationCount: response.review.annotations.length
     },
-    annotation
+    annotation,
+    event: input.eventId
+      ? response.review.events?.find((item) => item.id === input.eventId)
+      : undefined
   };
 }
 
 async function updateStatusPayload(
   markdownPath: string,
   annotationId: string,
-  status: AnnotationStatus
+  status: AnnotationStatus,
+  eventId?: string
 ): Promise<ToolResultPayload> {
-  const review = await updateAnnotationStatus(markdownPath, annotationId, { status });
-  return changedAnnotationPayload(review, annotationId);
+  const review = await updateAnnotationStatus(markdownPath, annotationId, { status, eventId });
+  return {
+    ...changedAnnotationPayload(review, annotationId),
+    event: eventId ? review.events?.find((item) => item.id === eventId) : undefined
+  };
 }
 
 async function createReviewEventPayload(

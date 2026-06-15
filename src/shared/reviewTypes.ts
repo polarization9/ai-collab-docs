@@ -201,6 +201,7 @@ export type UpdateReplyRequest = {
 
 export type UpdateAnnotationStatusRequest = {
   status: AnnotationStatus;
+  eventId?: string;
 };
 
 export type CreateReviewEventRequest = {

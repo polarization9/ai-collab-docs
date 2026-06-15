@@ -224,7 +224,10 @@ export async function updateAnnotationStatus(
     annotation.updatedAt = now;
     if (request.status === "resolved") {
       annotation.resolvedAt = now;
-      markOpenAnnotationEventsIgnored(review, annotationId, ["queued"]);
+      if (request.eventId) {
+        markAnnotationEventHandled(review, annotationId, request.eventId, now);
+      }
+      markOpenAnnotationEventsIgnored(review, annotationId, ["queued"], request.eventId);
     } else {
       delete annotation.resolvedAt;
     }
@@ -491,18 +494,49 @@ function normalizeReviewEvent(event: ReviewEvent): ReviewEvent {
 function markOpenAnnotationEventsIgnored(
   review: ReviewFile,
   annotationId: string,
-  statuses: ReviewEventDeliveryStatus[] = Array.from(OPEN_EVENT_STATUSES)
+  statuses: ReviewEventDeliveryStatus[] = Array.from(OPEN_EVENT_STATUSES),
+  excludeEventId?: string
 ): void {
   const statusSet = new Set(statuses);
   const now = new Date().toISOString();
   for (const event of review.events ?? []) {
-    if (event.annotationId === annotationId && statusSet.has(event.deliveryStatus)) {
+    if (
+      event.id !== excludeEventId &&
+      event.annotationId === annotationId &&
+      statusSet.has(event.deliveryStatus)
+    ) {
       event.deliveryStatus = "ignored";
       event.updatedAt = now;
     }
   }
 }
 
+
+function markAnnotationEventHandled(
+  review: ReviewFile,
+  annotationId: string,
+  eventId: string,
+  now: string
+): void {
+  const event = findReviewEvent(review, eventId);
+  if (event.annotationId !== annotationId) {
+    throw new Error("Review event does not belong to this annotation.");
+  }
+
+  if (event.deliveryStatus === "handled") {
+    event.lastError = undefined;
+    event.updatedAt = now;
+    return;
+  }
+
+  if (!OPEN_EVENT_STATUSES.has(event.deliveryStatus)) {
+    return;
+  }
+
+  event.deliveryStatus = "handled";
+  event.updatedAt = now;
+  event.lastError = undefined;
+}
 function createReplyTarget(reply: ReviewReply): ReviewReply["replyTo"] {
   return {
     replyId: reply.id,
