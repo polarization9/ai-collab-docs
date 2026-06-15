@@ -117,6 +117,8 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
         .menu(build_app_menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -553,8 +555,8 @@ fn show_settings_window(app: &AppHandle) -> tauri::Result<()> {
         WebviewUrl::External(Url::parse(&url).expect("invalid settings URL")),
     )
     .title(title)
-    .inner_size(520.0, 300.0)
-    .min_inner_size(480.0, 280.0)
+    .inner_size(520.0, 380.0)
+    .min_inner_size(480.0, 340.0)
     .resizable(false)
     .center()
     .build()?;

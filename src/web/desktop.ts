@@ -141,7 +141,7 @@ export async function openSettingsWindow(): Promise<void> {
   window.open(
     `${window.location.origin}${window.location.pathname}?settingsWindow=1`,
     "margent-settings",
-    "width=520,height=320"
+    "width=520,height=380"
   );
 }
 

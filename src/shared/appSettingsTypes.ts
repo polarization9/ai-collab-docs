@@ -12,6 +12,7 @@ export type AppSettings = {
   startupBehavior: StartupBehavior;
   codexSourceDiscoveryEnabled: boolean;
   externalRefreshEnabled: boolean;
+  autoCheckUpdatesEnabled: boolean;
 };
 
 export type RecentDocument = {

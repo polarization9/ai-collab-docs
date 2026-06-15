@@ -143,7 +143,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   colorScheme: "default",
   startupBehavior: "empty",
   codexSourceDiscoveryEnabled: true,
-  externalRefreshEnabled: true
+  externalRefreshEnabled: true,
+  autoCheckUpdatesEnabled: true
 };
 
 export async function loadAppSettings(): Promise<AppSettings> {
@@ -361,7 +362,11 @@ function normalizeSettings(value: Partial<AppSettings>): AppSettings {
     externalRefreshEnabled:
       typeof value.externalRefreshEnabled === "boolean"
         ? value.externalRefreshEnabled
-        : DEFAULT_SETTINGS.externalRefreshEnabled
+        : DEFAULT_SETTINGS.externalRefreshEnabled,
+    autoCheckUpdatesEnabled:
+      typeof value.autoCheckUpdatesEnabled === "boolean"
+        ? value.autoCheckUpdatesEnabled
+        : DEFAULT_SETTINGS.autoCheckUpdatesEnabled
   };
 }
 

@@ -1,9 +1,12 @@
 import {
   Clock3,
+  Download,
   FilePlus2,
   FileText,
   PanelLeftOpen,
   Plus,
+  RefreshCw,
+  RotateCw,
   Settings2,
   X
 } from "lucide-react";
@@ -35,7 +38,16 @@ import {
   preloadMarkdownFilePicker,
   startWindowDrag
 } from "./desktop";
-import { I18nProvider, useI18n } from "./i18n";
+import { I18nProvider, useI18n, type LocaleKey } from "./i18n";
+import {
+  checkForAppUpdate,
+  downloadAndInstallAppUpdate,
+  getDistributionChannel,
+  isAppUpdaterSupported,
+  relaunchApp,
+  shouldAutoCheckForUpdates,
+  type AppUpdateState
+} from "./updateManager";
 
 if (typeof document !== "undefined") {
   document.documentElement.dataset.runtime = isTauriRuntime() ? "desktop" : "web";
@@ -64,8 +76,11 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   colorScheme: "default",
   startupBehavior: "empty",
   codexSourceDiscoveryEnabled: true,
-  externalRefreshEnabled: true
+  externalRefreshEnabled: true,
+  autoCheckUpdatesEnabled: true
 };
+
+const UPDATE_CHECK_STORAGE_KEY = "margent-last-update-check-at";
 
 export default function App() {
   const searchParams = new URLSearchParams(window.location.search);
@@ -152,8 +167,45 @@ function AppContent({
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [isTocOpen, setIsTocOpen] = useState(true);
   const [recentDocuments, setRecentDocuments] = useState<RecentDocument[]>([]);
+  const [updateState, setUpdateState] = useState<AppUpdateState>(() =>
+    isAppUpdaterSupported()
+      ? { status: "idle", lastCheckedAt: readLastUpdateCheckAt() }
+      : { status: "unsupported" }
+  );
   const activeDocumentState = state.status === "ready" ? getActiveDocumentState(state) : null;
   const activeId = useActiveHeading(activeDocumentState?.document.headings ?? []);
+
+  const runUpdateCheck = useCallback(async () => {
+    if (!isAppUpdaterSupported()) {
+      setUpdateState({ status: "unsupported" });
+      return;
+    }
+
+    setUpdateState({ status: "checking" });
+    const result = await checkForAppUpdate();
+    if ("lastCheckedAt" in result && result.lastCheckedAt) {
+      writeLastUpdateCheckAt(result.lastCheckedAt);
+    }
+    setUpdateState(result);
+  }, []);
+
+  const installAppUpdate = useCallback(async () => {
+    if (updateState.status !== "available") {
+      return;
+    }
+
+    setUpdateState({
+      status: "downloading",
+      downloaded: 0,
+      version: updateState.version
+    });
+    const result = await downloadAndInstallAppUpdate((progress) => setUpdateState(progress));
+    setUpdateState(result);
+  }, [updateState]);
+
+  const restartForUpdate = useCallback(async () => {
+    await relaunchApp();
+  }, []);
 
   const reloadRecentDocuments = useCallback(async () => {
     try {
@@ -215,7 +267,10 @@ function AppContent({
       const document = await pickDocumentOnServer();
       const readyDocument = await tryLoadOpenDocumentState();
       setState((current) =>
-        addOrReplaceOpenDocument(current, readyDocument ?? { document, review: null, codexLink: null })
+        addOrReplaceOpenDocument(
+          current,
+          readyDocument ?? { document, review: null, codexLink: null }
+        )
       );
       void reloadRecentDocuments();
     } catch (error) {
@@ -237,6 +292,21 @@ function AppContent({
   useEffect(() => {
     preloadMarkdownFilePicker();
   }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded || !settings.autoCheckUpdatesEnabled) {
+      return;
+    }
+    if (!isAppUpdaterSupported()) {
+      setUpdateState({ status: "unsupported" });
+      return;
+    }
+    if (!shouldAutoCheckForUpdates(readLastUpdateCheckAt())) {
+      return;
+    }
+
+    void runUpdateCheck();
+  }, [runUpdateCheck, settings.autoCheckUpdatesEnabled, settingsLoaded]);
 
   useEffect(() => {
     let disposed = false;
@@ -435,7 +505,12 @@ function AppContent({
       <DocumentTabs
         documents={state.documents}
         activeDocumentId={state.activeDocumentId}
+        updateState={updateState}
+        autoCheckUpdatesEnabled={settings.autoCheckUpdatesEnabled}
         onOpen={openWithPicker}
+        onCheckUpdate={runUpdateCheck}
+        onInstallUpdate={installAppUpdate}
+        onRelaunchUpdate={restartForUpdate}
         onActivate={(documentId) => {
           const target = state.documents.find((item) => item.document.id === documentId);
           if (!target) {
@@ -642,6 +717,22 @@ function uniqueDocumentPaths(paths: string[]): string[] {
   return unique;
 }
 
+function readLastUpdateCheckAt(): string | undefined {
+  try {
+    return window.localStorage.getItem(UPDATE_CHECK_STORAGE_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeLastUpdateCheckAt(value: string): void {
+  try {
+    window.localStorage.setItem(UPDATE_CHECK_STORAGE_KEY, value);
+  } catch {
+    // Ignore storage failures; update checks can still run manually.
+  }
+}
+
 function updateOpenDocument(
   state: ReadyLoadState,
   patch: Partial<OpenDocumentState> & { document: ReviewDocument }
@@ -657,13 +748,23 @@ function updateOpenDocument(
 function DocumentTabs({
   documents,
   activeDocumentId,
+  updateState,
+  autoCheckUpdatesEnabled,
   onOpen,
+  onCheckUpdate,
+  onInstallUpdate,
+  onRelaunchUpdate,
   onActivate,
   onClose
 }: {
   documents: OpenDocumentState[];
   activeDocumentId: string;
+  updateState: AppUpdateState;
+  autoCheckUpdatesEnabled: boolean;
   onOpen: () => void;
+  onCheckUpdate: () => Promise<void>;
+  onInstallUpdate: () => Promise<void>;
+  onRelaunchUpdate: () => Promise<void>;
   onActivate: (documentId: string) => void;
   onClose: (documentId: string) => void;
 }) {
@@ -711,6 +812,13 @@ function DocumentTabs({
           );
         })}
       </div>
+      <AppUpdateButton
+        state={updateState}
+        autoCheckEnabled={autoCheckUpdatesEnabled}
+        onCheck={onCheckUpdate}
+        onInstall={onInstallUpdate}
+        onRelaunch={onRelaunchUpdate}
+      />
       <button
         type="button"
         className="document-tab-open"
@@ -722,6 +830,148 @@ function DocumentTabs({
       </button>
     </div>
   );
+}
+
+function AppUpdateButton({
+  state,
+  autoCheckEnabled,
+  onCheck,
+  onInstall,
+  onRelaunch
+}: {
+  state: AppUpdateState;
+  autoCheckEnabled: boolean;
+  onCheck: () => Promise<void>;
+  onInstall: () => Promise<void>;
+  onRelaunch: () => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [isOpen, setIsOpen] = useState(false);
+  if (getDistributionChannel() === "mas") {
+    return null;
+  }
+
+  const busy = state.status === "checking" || state.status === "downloading";
+  const hasBadge = state.status === "available" || state.status === "ready-to-restart";
+  const title = getUpdateTitle(state, t);
+
+  const handleClick = () => {
+    if (state.status === "unsupported" || state.status === "available" || busy) {
+      setIsOpen((current) => !current);
+      return;
+    }
+    if (state.status === "ready-to-restart") {
+      setIsOpen((current) => !current);
+      return;
+    }
+
+    setIsOpen(true);
+    void onCheck();
+  };
+
+  return (
+    <div className="document-tab-update" data-no-window-drag>
+      <button
+        type="button"
+        className={`document-tab-update-button${busy ? " document-tab-update-button-busy" : ""}`}
+        aria-label={title}
+        title={title}
+        onClick={handleClick}
+      >
+        {state.status === "available" || state.status === "ready-to-restart" ? (
+          <Download size={15} />
+        ) : state.status === "checking" || state.status === "downloading" ? (
+          <RotateCw size={15} />
+        ) : (
+          <RefreshCw size={15} />
+        )}
+        {hasBadge ? <span className="document-tab-update-badge" /> : null}
+      </button>
+      {isOpen ? (
+        <div className="document-tab-update-popover" role="status">
+          <div className="document-tab-update-title">{title}</div>
+          <p>{getUpdateDescription(state, autoCheckEnabled, t)}</p>
+          {state.status === "available" ? (
+            <button type="button" onClick={() => void onInstall()}>
+              {t("updates.downloadInstall")}
+            </button>
+          ) : null}
+          {state.status === "ready-to-restart" ? (
+            <button type="button" onClick={() => void onRelaunch()}>
+              {t("updates.restart")}
+            </button>
+          ) : null}
+          {state.status === "error" ? (
+            <button type="button" onClick={() => void onCheck()}>
+              {t("updates.retry")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function getUpdateTitle(
+  state: AppUpdateState,
+  t: (key: LocaleKey) => string
+): string {
+  switch (state.status) {
+    case "checking":
+      return t("updates.checking");
+    case "available":
+      return t("updates.available");
+    case "not-available":
+      return t("updates.notAvailable");
+    case "downloading":
+      return t("updates.downloading");
+    case "ready-to-restart":
+      return t("updates.readyToRestart");
+    case "error":
+      return t("updates.error");
+    case "unsupported":
+      return t("updates.unsupported");
+    case "idle":
+    default:
+      return t("updates.check");
+  }
+}
+
+function getUpdateDescription(
+  state: AppUpdateState,
+  autoCheckEnabled: boolean,
+  t: (key: LocaleKey, params?: Record<string, string | number>) => string
+): string {
+  switch (state.status) {
+    case "available":
+      return t("updates.availableDescription", { version: state.version });
+    case "not-available":
+      return t("updates.notAvailableDescription");
+    case "downloading":
+      return formatUpdateProgress(state, t);
+    case "ready-to-restart":
+      return t("updates.readyToRestartDescription", { version: state.version });
+    case "error":
+      return state.message;
+    case "unsupported":
+      return t("updates.unsupportedDescription");
+    case "checking":
+      return t("updates.checkingDescription");
+    case "idle":
+    default:
+      return autoCheckEnabled ? t("updates.idleDescription") : t("updates.autoOffDescription");
+  }
+}
+
+function formatUpdateProgress(
+  state: Extract<AppUpdateState, { status: "downloading" }>,
+  t: (key: LocaleKey, params?: Record<string, string | number>) => string
+): string {
+  if (!state.total) {
+    return t("updates.downloadingDescription");
+  }
+  const percent = Math.min(100, Math.round((state.downloaded / state.total) * 100));
+  return t("updates.downloadingPercent", { percent });
 }
 
 function isDocumentTabControl(target: EventTarget | null): boolean {
@@ -920,6 +1170,7 @@ function SettingsWindowPage({
 }) {
   const { t } = useI18n();
   const [feedback, setFeedback] = useState<string | null>(null);
+  const updaterSupported = isAppUpdaterSupported();
 
   const changeSettings = useCallback(async (patch: Partial<AppSettings>) => {
     try {
@@ -985,6 +1236,19 @@ function SettingsWindowPage({
               changeSettings({ codexSourceDiscoveryEnabled })
             }
           />
+          <SettingsToggle
+            label={t("settings.autoUpdates")}
+            checked={updaterSupported && settings.autoCheckUpdatesEnabled}
+            disabled={!updaterSupported}
+            description={
+              updaterSupported
+                ? t("settings.autoUpdatesDescription")
+                : t("settings.autoUpdatesUnsupported")
+            }
+            onChange={(autoCheckUpdatesEnabled) =>
+              changeSettings({ autoCheckUpdatesEnabled })
+            }
+          />
         </div>
         {feedback ? <div className="settings-window-feedback">{feedback}</div> : null}
       </section>
@@ -1047,21 +1311,31 @@ function SettingsSegment({
 function SettingsToggle({
   label,
   checked,
+  disabled = false,
+  description,
   onChange
 }: {
   label: string;
   checked: boolean;
+  disabled?: boolean;
+  description?: string;
   onChange: (checked: boolean) => Promise<void>;
 }) {
   const { t } = useI18n();
   return (
     <div className="settings-row settings-toggle-row">
-      <div className="settings-row-label">{label}</div>
+      <div>
+        <div className="settings-row-label">{label}</div>
+        {description ? <p className="settings-row-description">{description}</p> : null}
+      </div>
       <button
         type="button"
-        className={`settings-toggle${checked ? " settings-toggle-on" : ""}`}
+        className={`settings-toggle${checked ? " settings-toggle-on" : ""}${
+          disabled ? " settings-toggle-disabled" : ""
+        }`}
         role="switch"
         aria-checked={checked}
+        disabled={disabled}
         onClick={() => {
           void onChange(!checked);
         }}
