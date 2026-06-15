@@ -1,3 +1,4 @@
+import type { AgentLinkResponse } from "./agentTypes.js";
 import type { CodexLinkResponse } from "./codexTypes.js";
 import type { ReviewFile } from "./reviewTypes.js";
 
@@ -14,6 +15,7 @@ export type ReviewDocument = {
   absolutePath: string;
   relativePath: string;
   reviewPath: string;
+  agentLinkPath: string;
   codexLinkPath: string;
   content: string;
   contentHash: string;
@@ -25,7 +27,9 @@ export type ReviewSession = {
   hasDocument: boolean;
   documentPath: string | null;
   reviewPath: string | null;
+  agentLinkPath: string | null;
   codexLinkPath: string | null;
+  sourceAgentSessionId: string | null;
   sourceThreadId: string | null;
 };
 
@@ -39,6 +43,7 @@ export type ReviewBootstrap =
       session: ReviewSession;
       document: null;
       review: null;
+      agentLink: null;
       codexLink: null;
     }
   | {
@@ -46,6 +51,7 @@ export type ReviewBootstrap =
       session: ReviewSession;
       document: ReviewDocument;
       review: ReviewFile;
+      agentLink: AgentLinkResponse;
       codexLink: CodexLinkResponse;
     };
 

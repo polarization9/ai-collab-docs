@@ -12,6 +12,13 @@ import {
   loadCodexDocumentLink,
   updateCodexDocumentLink
 } from "./codexLink.js";
+import {
+  createAgentSuccessorInstruction,
+  getAgentLinkResponse,
+  getSourceSessionId,
+  loadAgentDocumentLink,
+  updateAgentDocumentLink
+} from "./agentLink.js";
 import { discoverCodexSourceForDocument } from "./codexDiscovery.js";
 import {
   listRecentDocuments,
@@ -24,13 +31,14 @@ import {
   dispatchReviewEvents,
   dispatchReviewEventsInBackground,
   retryReviewEvent,
+  sendAnnotationToAgent,
   sendAnnotationToCodex
 } from "./bridge.js";
 import { loadReviewDocument } from "./document.js";
 import { DocumentConflictError, saveReviewDocument } from "./documentEdit.js";
 import { getDocumentMergeStatus } from "./documentMerge.js";
 import { repairReviewAnchors } from "./reviewAnchorRepair.js";
-import { assertReadableMarkdownFile, getCodexLinkPath, getReviewPath, resolveMarkdownPath } from "./paths.js";
+import { assertReadableMarkdownFile, getAgentLinkPath, getCodexLinkPath, getReviewPath, resolveMarkdownPath } from "./paths.js";
 import { getAnnotationContext } from "./reviewContext.js";
 import {
   addAnnotationReply,
@@ -52,6 +60,7 @@ import {
   withReviewFileMutation
 } from "./review.js";
 import type { UpdateCodexLinkRequest } from "../shared/codexTypes.js";
+import type { AgentProvider, UpdateAgentLinkRequest } from "../shared/agentTypes.js";
 import type { DocumentMergeStatusRequest, SaveDocumentRequest } from "../shared/editTypes.js";
 import type {
   AddReplyRequest,
@@ -253,6 +262,53 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
     }
   });
 
+  app.get("/api/agent-link", async (request, response) => {
+    try {
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      response.json(await getAgentLinkResponse(currentMarkdownPath));
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
+  app.put("/api/agent-link", async (request, response) => {
+    try {
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      const link = await updateAgentDocumentLink(
+        currentMarkdownPath,
+        request.body as UpdateAgentLinkRequest
+      );
+      response.json(await getAgentLinkResponse(link.documentPath));
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
+  app.post("/api/agent-link/successor-instruction", async (request, response) => {
+    try {
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      response.json(
+        createAgentSuccessorInstruction(currentMarkdownPath, readAgentProviderRequest(request))
+      );
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
+  app.post("/api/agent-link/successor-instruction/copy", async (request, response) => {
+    try {
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      const instruction = createAgentSuccessorInstruction(
+        currentMarkdownPath,
+        readAgentProviderRequest(request)
+      );
+      await writeSystemClipboardText(instruction.instruction);
+      response.json(instruction);
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
   app.get("/api/codex-link", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
@@ -321,11 +377,11 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
         request.body as CreateAnnotationRequest
       );
       const created = review.annotations[review.annotations.length - 1];
-      const codexLink = await getCodexLinkResponse(currentMarkdownPath);
+      const agentLink = await getAgentLinkResponse(currentMarkdownPath);
       if (
         created &&
-        codexLink.connection.autoSendNewAnnotations &&
-        codexLink.connection.hasTarget
+        agentLink.connection.autoSendNewAnnotations &&
+        agentLink.connection.hasTarget
       ) {
         review = await createReviewEvent(currentMarkdownPath, {
           annotationId: created.id,
@@ -493,6 +549,15 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
     }
   });
 
+  app.post("/api/bridge/annotations/:id/send-to-agent", async (request, response) => {
+    try {
+      const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      response.json(await sendAnnotationToAgent(currentMarkdownPath, request.params.id));
+    } catch (error) {
+      sendApiError(response, error);
+    }
+  });
+
   app.post("/api/bridge/events/:eventId/retry", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
@@ -568,18 +633,25 @@ async function getReviewSession(markdownPath: string | undefined): Promise<Revie
       hasDocument: false,
       documentPath: null,
       reviewPath: null,
+      agentLinkPath: null,
       codexLinkPath: null,
+      sourceAgentSessionId: null,
       sourceThreadId: null
     };
   }
 
-  const link = await loadCodexDocumentLink(markdownPath);
+  const [agentLink, codexLink] = await Promise.all([
+    loadAgentDocumentLink(markdownPath),
+    loadCodexDocumentLink(markdownPath)
+  ]);
   return {
     hasDocument: true,
     documentPath: markdownPath,
     reviewPath: getReviewPath(markdownPath),
+    agentLinkPath: getAgentLinkPath(markdownPath),
     codexLinkPath: getCodexLinkPath(markdownPath),
-    sourceThreadId: getSourceThreadId(link)
+    sourceAgentSessionId: getSourceSessionId(agentLink),
+    sourceThreadId: getSourceThreadId(codexLink)
   };
 }
 
@@ -591,13 +663,15 @@ async function getReviewBootstrap(markdownPath: string | undefined): Promise<Rev
       session,
       document: null,
       review: null,
+      agentLink: null,
       codexLink: null
     };
   }
 
-  const [document, review, codexLink] = await Promise.all([
+  const [document, review, agentLink, codexLink] = await Promise.all([
     loadReviewDocument(markdownPath),
     loadReviewFile(markdownPath),
+    getAgentLinkResponse(markdownPath),
     getCodexLinkResponse(markdownPath)
   ]);
 
@@ -606,6 +680,7 @@ async function getReviewBootstrap(markdownPath: string | undefined): Promise<Rev
     session,
     document,
     review,
+    agentLink,
     codexLink
   };
 }
@@ -759,6 +834,28 @@ function readClipboardTextRequest(body: unknown): string {
     throw new Error("Clipboard text is required.");
   }
   return (body as { text: string }).text;
+}
+
+function readAgentProviderRequest(request: express.Request): AgentProvider {
+  const bodyProvider =
+    typeof request.body === "object" &&
+    request.body !== null &&
+    typeof (request.body as { provider?: unknown }).provider === "string"
+      ? (request.body as { provider: string }).provider
+      : undefined;
+  const queryProvider =
+    typeof request.query.provider === "string" ? request.query.provider : undefined;
+  return parseAgentProvider(bodyProvider ?? queryProvider);
+}
+
+function parseAgentProvider(provider: string | undefined): AgentProvider {
+  if (!provider) {
+    return "codex";
+  }
+  if (provider === "codex" || provider === "claude-code" || provider === "custom-cli") {
+    return provider;
+  }
+  throw new Error(`Unsupported Agent provider: ${provider}`);
 }
 
 function writeSystemClipboardText(text: string): Promise<void> {

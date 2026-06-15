@@ -2,15 +2,16 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type {
-  CodexTargetReference,
-  CodexTargetType
-} from "../shared/codexTypes.js";
+  AgentProvider,
+  AgentSessionReference,
+  AgentSessionRole
+} from "../shared/agentTypes.js";
 import type {
   BridgeSendAnnotationResponse,
   ReviewEvent,
   ReviewFile
 } from "../shared/reviewTypes.js";
-import { loadCodexDocumentLink, resolveCodexTarget, updateCodexDocumentLink } from "./codexLink.js";
+import { loadAgentDocumentLink, resolveAgentTarget, updateAgentDocumentLink } from "./agentLink.js";
 import {
   createReviewEvent,
   findLatestAnnotationEvent,
@@ -23,39 +24,43 @@ import {
   updateReviewEvent
 } from "./review.js";
 
-type SendToThreadInput = {
-  threadId: string;
+type SendToAgentInput = {
+  provider: AgentProvider;
+  sessionId: string;
   cwd?: string;
   documentPath: string;
   annotationId: string;
   eventId: string;
-  targetType: CodexTargetType;
+  targetRole?: AgentSessionRole;
   prompt: string;
   onTurnStarted?: (delivery: {
-    threadId: string;
+    provider: AgentProvider;
+    sessionId: string;
     turnId?: string;
     deliveryId: string;
   }) => Promise<void>;
 };
 
-type SendToThreadResult = {
+type SendToAgentResult = {
   ok: boolean;
-  threadId?: string;
+  provider: AgentProvider;
+  sessionId?: string;
   turnId?: string;
   deliveryId?: string;
   error?: string;
 };
 
-type CodexBridgeAdapter = {
+type AgentBridgeAdapter = {
+  provider: AgentProvider;
   name: NonNullable<ReviewEvent["delivery"]>["adapter"];
   isAvailable(): Promise<boolean>;
-  sendToThread(input: SendToThreadInput): Promise<SendToThreadResult>;
+  send(input: SendToAgentInput): Promise<SendToAgentResult>;
 };
 
 const APP_SERVER_REQUEST_TIMEOUT_MS = 60000;
 const APP_SERVER_TURN_TIMEOUT_MS = getTurnTimeoutMs();
 
-const bridgeAdapters: CodexBridgeAdapter[] = [
+const bridgeAdapters: AgentBridgeAdapter[] = [
   createCodexAppServerAdapter()
 ];
 
@@ -70,13 +75,20 @@ export async function sendAnnotationToCodex(
   markdownPath: string,
   annotationId: string
 ): Promise<BridgeSendAnnotationResponse> {
+  return sendAnnotationToAgent(markdownPath, annotationId);
+}
+
+export async function sendAnnotationToAgent(
+  markdownPath: string,
+  annotationId: string
+): Promise<BridgeSendAnnotationResponse> {
   const target = await getCurrentTarget(markdownPath);
-  if (!target?.threadId) {
+  if (!target?.sessionId) {
     return {
       ok: false,
       review: await loadReviewFile(markdownPath),
       needsBinding: true,
-      error: "No Codex target thread is bound for this document."
+      error: "No Agent target session is bound for this document."
     };
   }
 
@@ -153,25 +165,25 @@ export async function dispatchReviewEvents(
   }
 
   const target = await resolveEventTarget(markdownPath, queuedEvent);
-  if (!target?.threadId) {
+  if (!target?.sessionId) {
     const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
       deliveryStatus: "failed",
-      lastError: "No Codex target thread is bound for this document."
+      lastError: "No Agent target session is bound for this document."
     });
     return {
       ok: false,
       event: getEventFromReview(review, queuedEvent.id),
       review,
       needsBinding: true,
-      error: "No Codex target thread is bound for this document."
+      error: "No Agent target session is bound for this document."
     };
   }
 
-  const adapter = await selectBridgeAdapter();
+  const adapter = await selectBridgeAdapter(target.provider);
   await markReviewEventDelivering(markdownPath, queuedEvent.id, adapter?.name);
 
   if (!adapter) {
-    const error = "No available Codex Bridge adapter is configured.";
+    const error = `No available Agent Bridge adapter is configured for provider: ${target.provider}.`;
     const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
       deliveryStatus: "failed",
       lastError: error
@@ -188,18 +200,20 @@ export async function dispatchReviewEvents(
     documentPath: markdownPath,
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
-    targetType: target.type,
+    provider: target.provider,
+    targetRole: target.role,
     triggerReplyId: queuedEvent.triggerReplyId
   });
-  const result = await adapter.sendToThread({
-    threadId: target.threadId,
+  const result = await adapter.send({
+    provider: target.provider,
+    sessionId: target.sessionId,
     cwd: target.cwd,
     documentPath: markdownPath,
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
-    targetType: target.type,
+    targetRole: target.role,
     prompt,
-    onTurnStarted: async ({ threadId, turnId, deliveryId }) => {
+    onTurnStarted: async ({ provider, sessionId, turnId, deliveryId }) => {
       const now = new Date().toISOString();
       const latestReview = await loadReviewFile(markdownPath);
       const latestEvent = getEventFromReview(latestReview, queuedEvent.id);
@@ -213,13 +227,15 @@ export async function dispatchReviewEvents(
         delivery: {
           ...latestEvent.delivery,
           adapter: adapter.name,
-          threadId,
+          provider,
+          sessionId,
+          threadId: provider === "codex" ? sessionId : latestEvent.delivery?.threadId,
           turnId,
           deliveryId,
           lastAttemptAt: now
         }
       });
-      await updateCodexDocumentLink(markdownPath, {
+      await updateAgentDocumentLink(markdownPath, {
         bridge: {
           lastDeliveredEventId: queuedEvent.id,
           lastDeliveryAt: now
@@ -231,7 +247,7 @@ export async function dispatchReviewEvents(
   if (!result.ok) {
     const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
       deliveryStatus: "failed",
-      lastError: result.error ?? "Codex Bridge delivery failed."
+      lastError: result.error ?? "Agent Bridge delivery failed."
     });
     return {
       ok: false,
@@ -252,13 +268,15 @@ export async function dispatchReviewEvents(
     delivery: {
       ...latestEvent.delivery,
       adapter: adapter.name,
-      threadId: result.threadId,
+      provider: result.provider,
+      sessionId: result.sessionId,
+      threadId: result.provider === "codex" ? result.sessionId : latestEvent.delivery?.threadId,
       turnId: result.turnId,
       deliveryId: result.deliveryId,
       lastAttemptAt: now
     }
   });
-  await updateCodexDocumentLink(markdownPath, {
+  await updateAgentDocumentLink(markdownPath, {
     bridge: {
       lastDeliveredEventId: queuedEvent.id,
       lastDeliveryAt: now
@@ -288,7 +306,8 @@ export function createBridgePrompt(input: {
   documentPath: string;
   annotationId: string;
   eventId: string;
-  targetType: CodexTargetType;
+  provider: AgentProvider;
+  targetRole?: AgentSessionRole;
   triggerReplyId?: string;
 }): string {
   const isFollowup = Boolean(input.triggerReplyId);
@@ -324,8 +343,11 @@ export function createBridgePrompt(input: {
           ""
         ]
       : []),
+    "目标 Agent：",
+    input.provider,
+    "",
     "目标会话类型：",
-    input.targetType,
+    input.targetRole ?? "source",
     "",
     "请按以下步骤处理：",
     "",
@@ -338,7 +360,7 @@ export function createBridgePrompt(input: {
     "",
     ...(isFollowup
       ? [
-          "2. 这是用户对 Codex 回复发起的继续回复：",
+          "2. 这是用户对 Agent 回复发起的继续回复：",
           "   - context.triggerReply 是本轮任务的主要用户意图。",
           "   - 父级批注、原始选中文本、文档局部上下文和全部历史回复用于理解背景。",
           "   - 不要把父级批注当成一条新的待处理问题重复处理，除非 triggerReply 明确要求重新处理。"
@@ -358,8 +380,9 @@ export function createBridgePrompt(input: {
     `   annotationId: ${JSON.stringify(input.annotationId)},`,
     '   status: "resolved",',
     `   eventId: ${JSON.stringify(input.eventId)}`,
-    "   })。",
+    "})。",
     "   Margent 会在这次 resolved 写入中同步把本轮 event 标记为 handled，不需要再单独调用 reviewer_mark_review_event_handled。",
+    "   如果只是提出澄清问题、等待用户决策，或说明当前无法安全处理，则保持 open，并在回复里说明原因。",
     "",
     "5. 只有当你保持批注 open，但本轮已经回复、澄清或说明无法处理时，才调用 reviewer_mark_review_event_handled({",
     `   documentPath: ${JSON.stringify(input.documentPath)},`,
@@ -372,10 +395,12 @@ export function createBridgePrompt(input: {
     "- 如果 MCP 不可用，请回复说明无法处理，不要假装已经完成。"
   ];
 
-  if (input.targetType === "source") {
+  if (input.targetRole !== "successor") {
     base.push(
       "",
-      "你正在来源 Codex 会话中处理这条批注。可以使用本会话已有讨论上下文判断产品意图和修改边界。"
+      input.provider === "codex"
+        ? "你正在来源 Codex 会话中处理这条批注。可以使用本会话已有讨论上下文判断产品意图和修改边界。"
+        : "你正在来源 Agent 会话中处理这条批注。可以使用本会话已有讨论上下文判断产品意图和修改边界。"
     );
   } else {
     base.push(
@@ -388,15 +413,32 @@ export function createBridgePrompt(input: {
   return base.join("\n");
 }
 
-async function getCurrentTarget(markdownPath: string): Promise<CodexTargetReference | null> {
-  const link = await loadCodexDocumentLink(markdownPath);
-  return resolveCodexTarget(link);
+async function getCurrentTarget(markdownPath: string): Promise<AgentSessionReference | null> {
+  const link = await loadAgentDocumentLink(markdownPath);
+  return resolveAgentTarget(link);
 }
 
 export async function resolveEventTarget(
   markdownPath: string,
   event: ReviewEvent
-): Promise<CodexTargetReference | null> {
+): Promise<AgentSessionReference | null> {
+  if (event.targetAgent?.sessionId) {
+    const currentTarget = await getCurrentTarget(markdownPath);
+    const currentCwd =
+      currentTarget?.provider === event.targetAgent.provider &&
+      currentTarget.sessionId === event.targetAgent.sessionId &&
+      currentTarget.role === event.targetAgent.role
+        ? currentTarget.cwd
+        : undefined;
+    return {
+      provider: event.targetAgent.provider,
+      role: event.targetAgent.role,
+      sessionId: event.targetAgent.sessionId,
+      cwd: event.targetAgent.cwd ?? currentCwd,
+      displayName: event.targetAgent.displayName
+    };
+  }
+
   if (event.targetThreadId && event.targetType) {
     const eventCwd =
       event.targetCwd ??
@@ -405,21 +447,24 @@ export async function resolveEventTarget(
         : undefined);
     if (eventCwd) {
       return {
-        type: event.targetType,
-        threadId: event.targetThreadId,
+        provider: "codex",
+        role: event.targetType,
+        sessionId: event.targetThreadId,
         cwd: eventCwd
       };
     }
 
     const currentTarget = await getCurrentTarget(markdownPath);
     const currentCwd =
-      currentTarget?.threadId === event.targetThreadId &&
-      currentTarget.type === event.targetType
+      currentTarget?.provider === "codex" &&
+      currentTarget.sessionId === event.targetThreadId &&
+      currentTarget.role === event.targetType
         ? currentTarget.cwd
         : undefined;
     return {
-      type: event.targetType,
-      threadId: event.targetThreadId,
+      provider: "codex",
+      role: event.targetType,
+      sessionId: event.targetThreadId,
       cwd: event.targetCwd ?? currentCwd
     };
   }
@@ -427,8 +472,11 @@ export async function resolveEventTarget(
   return getCurrentTarget(markdownPath);
 }
 
-async function selectBridgeAdapter(): Promise<CodexBridgeAdapter | null> {
+async function selectBridgeAdapter(provider: AgentProvider): Promise<AgentBridgeAdapter | null> {
   for (const adapter of bridgeAdapters) {
+    if (adapter.provider !== provider) {
+      continue;
+    }
     if (await adapter.isAvailable()) {
       return adapter;
     }
@@ -436,17 +484,19 @@ async function selectBridgeAdapter(): Promise<CodexBridgeAdapter | null> {
   return null;
 }
 
-function createCodexAppServerAdapter(): CodexBridgeAdapter {
+function createCodexAppServerAdapter(): AgentBridgeAdapter {
   return {
-    name: "app-server",
+    provider: "codex",
+    name: "codex-app-server",
     async isAvailable() {
       return Boolean(await resolveCodexCommand());
     },
-    async sendToThread(input) {
+    async send(input) {
       const command = await resolveCodexCommand();
       if (!command) {
         return {
           ok: false,
+          provider: "codex",
           error:
             "Codex CLI was not found. Install Codex Desktop or set CODEX_CLI_PATH."
         };
@@ -477,11 +527,11 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
         client.notify("initialized");
 
         const resumeResult = await client.request("thread/resume", {
-          threadId: input.threadId
+          threadId: input.sessionId
         });
-        const resumedThreadId = extractThreadId(resumeResult) ?? input.threadId;
+        const resumedThreadId = extractThreadId(resumeResult) ?? input.sessionId;
         const turnStartResult = await client.request("turn/start", {
-          threadId: input.threadId,
+          threadId: input.sessionId,
           input: [
             {
               type: "text",
@@ -491,10 +541,11 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
           ]
         });
         const turnId = extractTurnId(turnStartResult);
-        const deliveryId = turnId ? `app-server:${turnId}` : `app-server:${input.eventId}`;
+        const deliveryId = turnId ? `codex-app-server:${turnId}` : `codex-app-server:${input.eventId}`;
 
         await input.onTurnStarted?.({
-          threadId: resumedThreadId,
+          provider: "codex",
+          sessionId: resumedThreadId,
           turnId,
           deliveryId
         });
@@ -503,13 +554,15 @@ function createCodexAppServerAdapter(): CodexBridgeAdapter {
 
         return {
           ok: true,
-          threadId: resumedThreadId,
+          provider: "codex",
+          sessionId: resumedThreadId,
           turnId,
           deliveryId
         };
       } catch (error) {
         return {
           ok: false,
+          provider: "codex",
           error: client.formatError(error)
         };
       } finally {

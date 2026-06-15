@@ -6,10 +6,19 @@ import {
   getCodexLinkResponse,
   updateCodexDocumentLink
 } from "../server/codexLink.js";
+import {
+  bindAgentSession,
+  getProviderDisplayName,
+  getAgentLinkResponse,
+  loadAgentDocumentLink,
+  resolveAgentTarget,
+  updateAgentDocumentLink
+} from "../server/agentLink.js";
 import { loadReviewDocument } from "../server/document.js";
 import { saveReviewDocument } from "../server/documentEdit.js";
 import {
   assertReadableMarkdownFile,
+  getAgentLinkPath,
   getCodexLinkPath,
   getReviewPath,
   resolveMarkdownPath
@@ -28,6 +37,7 @@ import {
   updateAnnotationStatus
 } from "../server/review.js";
 import { getAnnotationContext } from "../server/reviewContext.js";
+import type { AgentProvider, AgentSessionRole } from "../shared/agentTypes.js";
 import type { CodexTargetType } from "../shared/codexTypes.js";
 import type {
   AnnotationContext,
@@ -51,6 +61,8 @@ const REVIEW_EVENT_STATUS_VALUES = [
   "failed"
 ] as const;
 const CODEX_TARGET_ROLE_VALUES = ["source", "successor"] as const;
+const AGENT_PROVIDER_VALUES = ["codex", "claude-code", "custom-cli"] as const;
+const AGENT_SESSION_ROLE_VALUES = ["source", "successor"] as const;
 
 export function registerReviewerTools(server: McpServer, markdownPath?: string): void {
   server.registerTool(
@@ -71,6 +83,129 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
     },
     async ({ documentPath }) =>
       jsonToolResult(await getDocumentPayload(resolveToolMarkdownPath(markdownPath, documentPath)))
+  );
+
+  server.registerTool(
+    "reviewer_get_agent_link",
+    {
+      title: "Get Agent Link",
+      description:
+        "Read the current document's Agent connection state, including source session, current target, and automatic annotation monitoring setting.",
+      inputSchema: {
+        documentPath: z.string().min(1).optional().describe("Optional Markdown path.")
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ documentPath }) =>
+      jsonToolResult(await getAgentLinkPayload(markdownPath, documentPath))
+  );
+
+  server.registerTool(
+    "reviewer_update_agent_link",
+    {
+      title: "Update Agent Link",
+      description:
+        "Update Agent connection metadata for the current document. Prefer reviewer_bind_current_agent_session when binding the current conversation.",
+      inputSchema: {
+        documentPath: z.string().min(1).optional().describe("Optional Markdown path."),
+        provider: z
+          .enum(AGENT_PROVIDER_VALUES)
+          .optional()
+          .describe("Agent provider. Defaults to codex."),
+        sourceSessionId: z.string().min(1).optional().describe("Source Agent session id."),
+        targetSessionId: z.string().min(1).optional().describe("Current target Agent session id."),
+        targetRole: z
+          .enum(AGENT_SESSION_ROLE_VALUES)
+          .optional()
+          .describe("Whether the target is the source or successor session."),
+        cwd: z.string().min(1).optional().describe("Workspace path for the Agent session."),
+        displayName: z.string().min(1).optional().describe("Agent display name."),
+        autoSendNewAnnotations: z
+          .boolean()
+          .optional()
+          .describe("Enable or disable automatic monitoring for new annotations.")
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async ({
+      documentPath,
+      provider,
+      sourceSessionId,
+      targetSessionId,
+      targetRole,
+      cwd,
+      displayName,
+      autoSendNewAnnotations
+    }) =>
+      jsonToolResult(
+        await updateAgentLinkPayload(markdownPath, {
+          documentPath,
+          provider,
+          sourceSessionId,
+          targetSessionId,
+          targetRole,
+          cwd,
+          displayName,
+          autoSendNewAnnotations
+        })
+      )
+  );
+
+  server.registerTool(
+    "reviewer_bind_current_agent_session",
+    {
+      title: "Bind Current Agent Session",
+      description:
+        "Bind the current Agent session as the source or successor session for this Markdown document. Use this when the user pastes a connection instruction.",
+      inputSchema: {
+        documentPath: z.string().min(1).optional().describe("Markdown document path."),
+        provider: z
+          .enum(AGENT_PROVIDER_VALUES)
+          .describe("Agent provider for this session."),
+        role: z
+          .enum(AGENT_SESSION_ROLE_VALUES)
+          .describe("Bind this Agent session as source or successor."),
+        sessionId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional session id if the Agent adapter provides it."),
+        cwd: z.string().min(1).optional().describe("Optional Agent workspace path."),
+        displayName: z.string().min(1).optional().describe("Optional Agent display name."),
+        autoSendNewAnnotations: z
+          .boolean()
+          .optional()
+          .describe("Optionally set automatic monitoring after binding.")
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async ({ documentPath, provider, role, sessionId, cwd, displayName, autoSendNewAnnotations }) =>
+      jsonToolResult(
+        await bindCurrentAgentSessionPayload(markdownPath, {
+          documentPath,
+          provider,
+          role,
+          sessionId,
+          cwd,
+          displayName,
+          autoSendNewAnnotations
+        })
+      )
   );
 
   server.registerTool(
@@ -251,7 +386,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           .string()
           .min(1)
           .optional()
-          .describe("Optional agent display name. Defaults to Codex.")
+          .describe("Optional agent display name. Defaults to the current Agent provider name.")
       },
       annotations: {
         readOnlyHint: false,
@@ -266,7 +401,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           resolveToolMarkdownPath(markdownPath, documentPath),
           annotationId,
           body,
-          authorName ?? "Codex",
+          authorName,
           replyToReplyId
         )
       )
@@ -385,7 +520,15 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         openWorldHint: false
       }
     },
-    async ({ documentPath, content, annotationId, preferredSelectedText, replyBody, eventId, resolveAnnotation }) =>
+    async ({
+      documentPath,
+      content,
+      annotationId,
+      preferredSelectedText,
+      replyBody,
+      eventId,
+      resolveAnnotation
+    }) =>
       jsonToolResult(
         await applyDocumentEditPayload(resolveToolMarkdownPath(markdownPath, documentPath), {
           content,
@@ -423,7 +566,12 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
     },
     async ({ documentPath, annotationId, status, eventId }) =>
       jsonToolResult(
-        await updateStatusPayload(resolveToolMarkdownPath(markdownPath, documentPath), annotationId, status, eventId)
+        await updateStatusPayload(
+          resolveToolMarkdownPath(markdownPath, documentPath),
+          annotationId,
+          status,
+          eventId
+        )
       )
   );
 
@@ -612,6 +760,7 @@ async function getDocumentPayload(markdownPath: string): Promise<ToolResultPaylo
       absolutePath: document.absolutePath,
       relativePath: document.relativePath,
       reviewPath: document.reviewPath,
+      agentLinkPath: document.agentLinkPath,
       codexLinkPath: document.codexLinkPath,
       headings: document.headings,
       contentHash: document.contentHash,
@@ -627,6 +776,85 @@ async function getCodexLinkPayload(
 ): Promise<ToolResultPayload> {
   return {
     codexLink: await getCodexLinkResponse(resolveToolMarkdownPath(markdownPath, documentPath))
+  };
+}
+
+async function getAgentLinkPayload(
+  markdownPath: string | undefined,
+  documentPath?: string
+): Promise<ToolResultPayload> {
+  return {
+    agentLink: await getAgentLinkResponse(resolveToolMarkdownPath(markdownPath, documentPath))
+  };
+}
+
+async function updateAgentLinkPayload(
+  markdownPath: string | undefined,
+  input: {
+    documentPath?: string;
+    provider?: AgentProvider;
+    sourceSessionId?: string;
+    targetSessionId?: string;
+    targetRole?: AgentSessionRole;
+    cwd?: string;
+    displayName?: string;
+    autoSendNewAnnotations?: boolean;
+  }
+): Promise<ToolResultPayload> {
+  const resolvedMarkdownPath = resolveToolMarkdownPath(markdownPath, input.documentPath);
+  const now = new Date().toISOString();
+  const provider = input.provider ?? "codex";
+  await updateAgentDocumentLink(resolvedMarkdownPath, {
+    source: input.sourceSessionId
+      ? {
+          provider,
+          role: "source",
+          sessionId: input.sourceSessionId,
+          cwd: input.cwd,
+          displayName: input.displayName,
+          configuredAt: now,
+          configuredBy: "agent",
+          configuredVia: "source"
+        }
+      : undefined,
+    target: input.targetSessionId
+      ? {
+          provider,
+          role: input.targetRole ?? "source",
+          sessionId: input.targetSessionId,
+          cwd: input.cwd,
+          displayName: input.displayName,
+          configuredAt: now,
+          configuredBy: "agent",
+          configuredVia: input.targetRole === "successor" ? "mcp-bind-instruction" : "source"
+        }
+      : undefined,
+    bridge:
+      input.autoSendNewAnnotations === undefined
+        ? undefined
+        : { autoSendNewAnnotations: input.autoSendNewAnnotations }
+  });
+  return {
+    agentLink: await getAgentLinkResponse(resolvedMarkdownPath)
+  };
+}
+
+async function bindCurrentAgentSessionPayload(
+  markdownPath: string | undefined,
+  input: {
+    documentPath?: string;
+    provider: AgentProvider;
+    role: AgentSessionRole;
+    sessionId?: string;
+    cwd?: string;
+    displayName?: string;
+    autoSendNewAnnotations?: boolean;
+  }
+): Promise<ToolResultPayload> {
+  const resolvedMarkdownPath = resolveToolMarkdownPath(markdownPath, input.documentPath);
+  await bindAgentSession(resolvedMarkdownPath, input);
+  return {
+    agentLink: await getAgentLinkResponse(resolvedMarkdownPath)
   };
 }
 
@@ -734,11 +962,11 @@ async function addReplyPayload(
   markdownPath: string,
   annotationId: string,
   body: string,
-  authorName: string,
+  authorName?: string,
   replyToReplyId?: string
 ): Promise<ToolResultPayload> {
   const review = await addAnnotationReply(markdownPath, annotationId, {
-    author: { type: "agent", name: authorName },
+    author: { type: "agent", name: authorName ?? (await getDefaultAgentAuthorName(markdownPath)) },
     body,
     replyToReplyId
   });
@@ -787,8 +1015,8 @@ async function applyDocumentEditPayload(
     annotationId?: string;
     preferredSelectedText?: string;
     replyBody?: string;
-    resolveAnnotation?: boolean;
     eventId?: string;
+    resolveAnnotation?: boolean;
   }
 ): Promise<ToolResultPayload> {
   const currentDocument = await loadReviewDocument(markdownPath);
@@ -806,7 +1034,7 @@ async function applyDocumentEditPayload(
 
   if (input.annotationId && input.replyBody) {
     const review = await addAnnotationReply(markdownPath, input.annotationId, {
-      author: { type: "agent", name: "Codex" },
+      author: { type: "agent", name: await getDefaultAgentAuthorName(markdownPath) },
       body: input.replyBody
     });
     response = { ...response, review };
@@ -846,6 +1074,12 @@ async function applyDocumentEditPayload(
       ? response.review.events?.find((item) => item.id === input.eventId)
       : undefined
   };
+}
+
+async function getDefaultAgentAuthorName(markdownPath: string): Promise<string> {
+  const link = await loadAgentDocumentLink(markdownPath);
+  const target = resolveAgentTarget(link) ?? link?.source;
+  return target?.displayName ?? getProviderDisplayName(target?.provider ?? "codex");
 }
 
 async function updateStatusPayload(
@@ -947,6 +1181,7 @@ async function getSessionPayload(
   }
 
   const document = await loadReviewDocument(resolvedMarkdownPath);
+  const agentLink = await getAgentLinkResponse(resolvedMarkdownPath);
   const codexLink = await getCodexLinkResponse(resolvedMarkdownPath);
   return {
     session: {
@@ -954,8 +1189,10 @@ async function getSessionPayload(
       mode: markdownPath ? "default-document" : "multi-document",
       documentPath: resolvedMarkdownPath,
       reviewPath: getReviewPath(resolvedMarkdownPath),
+      agentLinkPath: getAgentLinkPath(resolvedMarkdownPath),
       codexLinkPath: getCodexLinkPath(resolvedMarkdownPath),
       documentId: document.id,
+      agentConnection: agentLink.connection,
       codexConnection: codexLink.connection
     }
   };

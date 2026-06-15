@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import type { CodexLinkResponse } from "../../../shared/codexTypes";
+import type { AgentLinkResponse } from "../../../shared/agentTypes";
 import type {
   AddReplyRequest,
   AnnotationStatus,
@@ -33,8 +33,8 @@ type AnnotationFilter = "all" | AnnotationStatus;
 type AnnotationSidebarProps = {
   annotations: ReviewAnnotation[];
   events: ReviewEvent[];
-  codexLink: CodexLinkResponse | null;
-  codexLinkError?: string | null;
+  agentLink: AgentLinkResponse | null;
+  agentLinkError?: string | null;
   selectedAnnotationId: string | null;
   isLoading: boolean;
   error?: string;
@@ -54,7 +54,7 @@ type AnnotationSidebarProps = {
   onCreateDocumentAnnotation: (body: string) => Promise<void>;
   onToggleAutoMonitor: (enabled: boolean) => Promise<void>;
   onCopySuccessorInstruction: () => Promise<void>;
-  onSendToCodex: (annotationId: string) => Promise<void>;
+  onSendToAgent: (annotationId: string) => Promise<void>;
   onRetryReviewEvent: (eventId: string) => Promise<void>;
   onReload: () => void;
 };
@@ -62,8 +62,8 @@ type AnnotationSidebarProps = {
 export function AnnotationSidebar({
   annotations,
   events,
-  codexLink,
-  codexLinkError,
+  agentLink,
+  agentLinkError,
   selectedAnnotationId,
   isLoading,
   error,
@@ -76,7 +76,7 @@ export function AnnotationSidebar({
   onCreateDocumentAnnotation,
   onToggleAutoMonitor,
   onCopySuccessorInstruction,
-  onSendToCodex,
+  onSendToAgent,
   onRetryReviewEvent,
   onReload
 }: AnnotationSidebarProps) {
@@ -138,9 +138,9 @@ export function AnnotationSidebar({
         </div>
       </div>
 
-      <AnnotationCodexStatus
-        codexLink={codexLink}
-        error={codexLinkError}
+      <AnnotationAgentStatus
+        agentLink={agentLink}
+        error={agentLinkError}
         onToggleAutoMonitor={onToggleAutoMonitor}
         onCopySuccessorInstruction={onCopySuccessorInstruction}
       />
@@ -206,7 +206,7 @@ export function AnnotationSidebar({
             onDeleteAnnotation={onDeleteAnnotation}
             onEditReply={onEditReply}
             onStatusChange={onStatusChange}
-            onSendToCodex={onSendToCodex}
+            onSendToAgent={onSendToAgent}
             onRetryReviewEvent={onRetryReviewEvent}
           />
         ))}
@@ -215,23 +215,23 @@ export function AnnotationSidebar({
   );
 }
 
-function AnnotationCodexStatus({
-  codexLink,
+function AnnotationAgentStatus({
+  agentLink,
   error,
   onToggleAutoMonitor,
   onCopySuccessorInstruction
 }: {
-  codexLink: CodexLinkResponse | null;
+  agentLink: AgentLinkResponse | null;
   error?: string | null;
   onToggleAutoMonitor: (enabled: boolean) => Promise<void>;
   onCopySuccessorInstruction: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const [isBusy, setIsBusy] = useState(false);
-  const connection = codexLink?.connection;
+  const connection = agentLink?.connection;
   const autoEnabled = Boolean(connection?.autoSendNewAnnotations);
-  const view = getCodexRouteView(codexLink, t, error);
-  const copyInstructionLabel = connection?.hasTarget ? t("codex.copySuccessor") : t("codex.copyConnect");
+  const view = getAgentRouteView(agentLink, t, error);
+  const copyInstructionLabel = connection?.hasTarget ? t("agent.copySuccessor") : t("agent.copyConnect");
 
   const run = async (action: () => Promise<void>) => {
     if (isBusy) {
@@ -248,7 +248,7 @@ function AnnotationCodexStatus({
   return (
     <section
       className={`annotation-codex-route annotation-codex-route-${view.tone}`}
-      aria-label={t("codex.status")}
+      aria-label={t("agent.status")}
     >
       <div className="annotation-codex-route-main">
         <span className="annotation-codex-route-dot" aria-hidden="true" />
@@ -265,15 +265,15 @@ function AnnotationCodexStatus({
             className={`annotation-codex-monitor${autoEnabled ? " annotation-codex-monitor-on" : ""}`}
             role="switch"
             aria-checked={autoEnabled}
-            aria-label={autoEnabled ? t("codex.disableAuto") : t("codex.enableAuto")}
-            title={autoEnabled ? t("codex.disableAuto") : t("codex.enableAuto")}
+            aria-label={autoEnabled ? t("agent.disableAuto") : t("agent.enableAuto")}
+            title={autoEnabled ? t("agent.disableAuto") : t("agent.enableAuto")}
             disabled={isBusy}
             onClick={() => run(() => onToggleAutoMonitor(!autoEnabled))}
           >
             <span className="annotation-codex-switch" aria-hidden="true">
               <span />
             </span>
-            <span>{t("codex.autoShort")}</span>
+            <span>{t("agent.autoShort")}</span>
           </button>
         ) : null}
         <button
@@ -282,7 +282,7 @@ function AnnotationCodexStatus({
           aria-label={copyInstructionLabel}
           title={copyInstructionLabel}
           data-tooltip={copyInstructionLabel}
-          disabled={isBusy || (!codexLink && !error)}
+          disabled={isBusy || (!agentLink && !error)}
           onClick={() => run(onCopySuccessorInstruction)}
         >
           <Link2 size={14} />
@@ -292,48 +292,59 @@ function AnnotationCodexStatus({
   );
 }
 
-function getCodexRouteView(
-  codexLink: CodexLinkResponse | null,
+function getAgentRouteView(
+  agentLink: AgentLinkResponse | null,
   t: (key: LocaleKey, params?: Record<string, string | number>) => string,
   error?: string | null
 ) {
   if (error) {
     return {
       tone: "error",
-      label: t("codex.readFailed"),
+      label: t("agent.readFailed"),
       detail: error,
       threadTitle: error
     };
   }
 
-  if (!codexLink) {
+  if (!agentLink) {
     return {
       tone: "checking",
-      label: t("codex.checking"),
-      detail: t("codex.readingLocal"),
-      threadTitle: t("codex.readingLocal")
+      label: t("agent.checking"),
+      detail: t("agent.readingLocal"),
+      threadTitle: t("agent.readingLocal")
     };
   }
 
-  const { connection } = codexLink;
+  const { connection } = agentLink;
 
   if (!connection.hasTarget) {
     return {
       tone: "unlinked",
-      label: t("codex.notDetected"),
-      detail: t("codex.localOnly"),
-      threadTitle: t("codex.localOnly")
+      label: t("agent.notDetected"),
+      detail: t("agent.localOnly"),
+      threadTitle: t("agent.localOnly")
     };
   }
 
-  const mode = connection.autoSendNewAnnotations ? t("codex.autoMode") : t("codex.manualMode");
+  const providerName = getAgentProviderName(connection.provider);
+  const mode = connection.autoSendNewAnnotations ? t("agent.autoMode") : t("agent.manualMode");
 
   return {
-    tone: connection.autoSendNewAnnotations ? "auto" : connection.targetType ?? "source",
-    label: t("codex.detected"),
+    tone: connection.autoSendNewAnnotations ? "auto" : connection.targetRole ?? "source",
+    label: t("agent.detected", { provider: providerName }),
     detail: mode,
-    threadTitle: mode
+    threadTitle: `${providerName} · ${mode}`
   };
+}
+
+function getAgentProviderName(provider: AgentLinkResponse["connection"]["provider"]): string {
+  if (provider === "claude-code") {
+    return "Claude Code";
+  }
+  if (provider === "custom-cli") {
+    return "Custom CLI";
+  }
+  return "Codex";
 }
 
 type AnnotationCardProps = {
@@ -353,7 +364,7 @@ type AnnotationCardProps = {
     request: UpdateReplyRequest
   ) => Promise<void>;
   onStatusChange: (annotationId: string, status: AnnotationStatus) => Promise<void>;
-  onSendToCodex: (annotationId: string) => Promise<void>;
+  onSendToAgent: (annotationId: string) => Promise<void>;
   onRetryReviewEvent: (eventId: string) => Promise<void>;
 };
 
@@ -431,7 +442,7 @@ function AnnotationCard({
   onDeleteAnnotation,
   onEditReply,
   onStatusChange,
-  onSendToCodex,
+  onSendToAgent,
   onRetryReviewEvent
 }: AnnotationCardProps) {
   const { t } = useI18n();
@@ -620,9 +631,9 @@ function AnnotationCard({
     })();
   };
 
-  const sendToCodex = () => {
+  const sendToAgent = () => {
     void run(async () => {
-      await onSendToCodex(annotation.id);
+      await onSendToAgent(annotation.id);
     });
   };
 
@@ -754,9 +765,9 @@ function AnnotationCard({
             <Pencil size={13} />
             {t("annotation.edit")}
           </button>
-          <button type="button" onClick={sendToCodex} disabled={hasPendingOperation}>
+          <button type="button" onClick={sendToAgent} disabled={hasPendingOperation}>
             <AtSign size={13} />
-            {t("annotation.sendCodex")}
+            {t("annotation.sendAgent")}
           </button>
         </div>
       ) : null}
