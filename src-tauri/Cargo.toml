@@ -1,6 +1,6 @@
 [package]
 name = "margent"
-version = "0.1.1"
+version = "0.1.2"
 description = "Margent desktop shell"
 authors = ["Margent"]
 edition = "2021"
