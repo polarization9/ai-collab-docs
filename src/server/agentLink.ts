@@ -61,16 +61,12 @@ export async function updateAgentDocumentLink(
       source: request.source ? normalizeSession(request.source, "source") : base.source,
       target: request.target ? normalizeSession(request.target) : base.target,
       bridge: request.bridge
-        ? {
+        ? normalizeBridge({
             ...base.bridge,
-            ...normalizeBridge(request.bridge)
-          }
+            ...request.bridge
+          })
         : base.bridge
     };
-
-    if (updated.source && !updated.target) {
-      updated.target = sourceToDefaultTarget(updated.source);
-    }
 
     return saveAgentDocumentLink(markdownPath, updated);
   });
@@ -83,15 +79,35 @@ export async function applyDiscoveredAgentSource(
 ): Promise<AgentDocumentLink> {
   return withAgentLinkMutation(markdownPath, async () => {
     const existing = await loadAgentDocumentLink(markdownPath);
-    if (existing?.source?.sessionId) {
-      return existing;
-    }
-
     const base = existing ?? createEmptyAgentDocumentLink(markdownPath);
     return saveAgentDocumentLink(markdownPath, {
       ...base,
-      source: normalizeSession(source, "source"),
-      target: normalizeSession(target)
+      source: base.source?.sessionId ? base.source : normalizeSession(source, "source"),
+      target: base.target ? base.target : normalizeSession(target)
+    });
+  });
+}
+
+export async function applyDiscoveredAgentTarget(
+  markdownPath: string,
+  input: {
+    source?: AgentSessionReference;
+    target: AgentSessionReference;
+  }
+): Promise<AgentDocumentLink> {
+  return withAgentLinkMutation(markdownPath, async () => {
+    const existing = await loadAgentDocumentLink(markdownPath);
+    const base = existing ?? createEmptyAgentDocumentLink(markdownPath);
+    const existingTargetIsDeliverable = Boolean(
+      base.target && isDeliverableAgentTarget(base.target)
+    );
+    return saveAgentDocumentLink(markdownPath, {
+      ...base,
+      source:
+        input.source && !base.source?.sessionId
+          ? normalizeSession(input.source, "source")
+          : base.source,
+      target: existingTargetIsDeliverable ? base.target : normalizeSession(input.target)
     });
   });
 }
@@ -99,6 +115,7 @@ export async function applyDiscoveredAgentSource(
 export async function getAgentLinkResponse(markdownPath: string): Promise<AgentLinkResponse> {
   const link = await loadAgentDocumentLink(markdownPath);
   const target = resolveAgentTarget(link);
+  const hasDeliverableTarget = Boolean(target && isDeliverableAgentTarget(target));
   return {
     documentPath: markdownPath,
     agentLinkPath: getAgentLinkPath(markdownPath),
@@ -106,7 +123,7 @@ export async function getAgentLinkResponse(markdownPath: string): Promise<AgentL
     link,
     connection: {
       hasSource: Boolean(getSourceSessionId(link)),
-      hasTarget: Boolean(target?.sessionId),
+      hasTarget: hasDeliverableTarget,
       provider: target?.provider ?? null,
       targetRole: target?.role ?? null,
       autoSendNewAnnotations: Boolean(link?.bridge?.autoSendNewAnnotations),
@@ -130,19 +147,7 @@ export function getSourceSessionId(link: AgentDocumentLink | null): string | nul
 export function resolveAgentTarget(
   link: AgentDocumentLink | null
 ): AgentSessionReference | null {
-  if (!link) {
-    return null;
-  }
-
-  if (link.target?.sessionId) {
-    return link.target;
-  }
-
-  if (link.source?.sessionId) {
-    return sourceToDefaultTarget(link.source);
-  }
-
-  return link.target ?? null;
+  return link?.target ?? null;
 }
 
 export function createAgentSuccessorInstruction(
@@ -193,8 +198,9 @@ export async function bindAgentSession(
       input.sessionId ?? getCurrentAgentSessionId(input.provider)
     );
     const cwd = normalizeOptionalString(input.cwd ?? getCurrentAgentCwd(input.provider));
+    const requiresSessionId = agentTargetRequiresSessionId(input.provider);
 
-    if (!sessionId) {
+    if (requiresSessionId && !sessionId) {
       throw new Error(
         `Unable to detect the current ${getProviderDisplayName(input.provider)} session id for automatic binding.`
       );
@@ -331,6 +337,9 @@ export function getProviderDisplayName(provider: AgentProvider): string {
   if (provider === "claude-code") {
     return "Claude Code";
   }
+  if (provider === "workbuddy") {
+    return "WorkBuddy";
+  }
   if (provider === "custom-cli") {
     return "Custom CLI";
   }
@@ -382,6 +391,7 @@ function normalizeAgentDocumentLink(
   if (link.target) {
     normalized.target = normalizeSession(link.target);
   } else if (normalized.source?.sessionId) {
+    // Legacy source-only links used the source session as the default delivery target.
     normalized.target = sourceToDefaultTarget(normalized.source);
   }
 
@@ -419,7 +429,7 @@ function normalizeBridge(bridge: NonNullable<AgentDocumentLink["bridge"]>) {
 }
 
 function normalizeProvider(provider: unknown): AgentProvider {
-  if (provider === "claude-code" || provider === "custom-cli") {
+  if (provider === "claude-code" || provider === "workbuddy" || provider === "custom-cli") {
     return provider;
   }
   return "codex";
@@ -568,7 +578,21 @@ function getCurrentAgentSessionId(provider: AgentProvider): string | undefined {
       normalizeOptionalString(process.env.CLAUDE_SESSION_ID)
     );
   }
+  if (provider === "workbuddy") {
+    return (
+      normalizeOptionalString(process.env.WORKBUDDY_SESSION_ID) ??
+      normalizeOptionalString(process.env.CODEBUDDY_SESSION_ID)
+    );
+  }
   return normalizeOptionalString(process.env.MARGENT_AGENT_SESSION_ID);
+}
+
+export function isDeliverableAgentTarget(target: AgentSessionReference): boolean {
+  return !agentTargetRequiresSessionId(target.provider) || Boolean(target.sessionId);
+}
+
+export function agentTargetRequiresSessionId(provider: AgentProvider): boolean {
+  return provider === "codex" || provider === "claude-code" || provider === "workbuddy";
 }
 
 function getCurrentAgentCwd(provider: AgentProvider): string | undefined {
@@ -577,6 +601,13 @@ function getCurrentAgentCwd(provider: AgentProvider): string | undefined {
   }
   if (provider === "claude-code") {
     return normalizeOptionalString(process.env.CLAUDE_CODE_WORKSPACE) ?? process.cwd();
+  }
+  if (provider === "workbuddy") {
+    return (
+      normalizeOptionalString(process.env.WORKBUDDY_WORKSPACE) ??
+      normalizeOptionalString(process.env.CODEBUDDY_WORKSPACE) ??
+      process.cwd()
+    );
   }
   return normalizeOptionalString(process.env.MARGENT_AGENT_WORKSPACE) ?? process.cwd();
 }

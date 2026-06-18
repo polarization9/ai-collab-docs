@@ -138,6 +138,7 @@ export function AnnotationWorkspace({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [agentLink, setAgentLink] = useState<AgentLinkResponse | null>(initialAgentLink);
   const [agentLinkError, setAgentLinkError] = useState<string | null>(null);
+  const didInitializeAgentLinkRef = useRef(false);
   const review = useReview(document.id, initialReview, document.absolutePath);
   const isDirty = editorDraft !== editorBaseContent;
   const annotations = useMemo(
@@ -385,14 +386,13 @@ export function AnnotationWorkspace({
   ]);
 
   useEffect(() => {
-    if (initialAgentLink) {
-      setAgentLink(initialAgentLink);
-      setAgentLinkError(null);
+    if (didInitializeAgentLinkRef.current) {
       return;
     }
+    didInitializeAgentLinkRef.current = true;
 
     void reloadAgentLink();
-  }, [document.id, initialAgentLink, reloadAgentLink]);
+  }, [reloadAgentLink]);
 
   useEffect(() => {
     if (!isSidebarOpen) {
@@ -421,7 +421,7 @@ export function AnnotationWorkspace({
 
       if (hasAutoReviewPollEvents(previousReview) && !hasAutoReviewPollEvents(nextReview)) {
         void reloadAgentLink();
-        void handleDetectedDocumentChange("codex");
+        void handleDetectedDocumentChange("agent");
       }
     };
 
@@ -532,6 +532,14 @@ export function AnnotationWorkspace({
     if (annotation && container) {
       scrollToAnnotation(annotation, container);
     }
+  };
+
+  const toggleAnnotationCard = (annotationId: string) => {
+    if (review.selectedAnnotationId === annotationId) {
+      review.setSelectedAnnotationId(null);
+      return;
+    }
+    selectAnnotation(annotationId);
   };
 
   const enterEditMode = () => {
@@ -1010,6 +1018,7 @@ export function AnnotationWorkspace({
           isLoading={review.state.status === "loading"}
           error={review.state.status === "error" ? review.state.message : undefined}
           onSelect={selectAnnotation}
+          onToggleSelect={toggleAnnotationCard}
           onReply={review.reply}
           onEditAnnotation={review.editAnnotation}
           onDeleteAnnotation={review.removeAnnotation}

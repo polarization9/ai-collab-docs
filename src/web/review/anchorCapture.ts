@@ -9,6 +9,7 @@ export type AnnotationDraft = {
 };
 
 const CONTEXT_CHARS = 40;
+type BoundaryEdge = "start" | "end";
 
 export function captureAnnotationDraft(
   container: HTMLElement,
@@ -33,8 +34,8 @@ export function captureAnnotationDraft(
     return null;
   }
 
-  const startBlock = getReviewBlock(range.startContainer);
-  const endBlock = getReviewBlock(range.endContainer);
+  const startBlock = getBoundaryReviewBlock(range.startContainer, range.startOffset, "start");
+  const endBlock = getBoundaryReviewBlock(range.endContainer, range.endOffset, "end");
   if (!startBlock || !endBlock || !container.contains(startBlock) || !container.contains(endBlock)) {
     return null;
   }
@@ -52,8 +53,18 @@ export function captureAnnotationDraft(
     const endBlockMeta = getBlockMeta(endBlock);
     const startBlockText = startBlock.textContent ?? "";
     const endBlockText = endBlock.textContent ?? "";
-    const startOffset = getTextOffset(startBlock, range.startContainer, range.startOffset);
-    const endOffset = getTextOffset(endBlock, range.endContainer, range.endOffset);
+    const startOffset = getBoundaryTextOffset(
+      startBlock,
+      range.startContainer,
+      range.startOffset,
+      "start"
+    );
+    const endOffset = getBoundaryTextOffset(
+      endBlock,
+      range.endContainer,
+      range.endOffset,
+      "end"
+    );
 
     return {
       selectedText,
@@ -81,8 +92,18 @@ export function captureAnnotationDraft(
   }
 
   const blockText = startBlock.textContent ?? "";
-  const startOffset = getTextOffset(startBlock, range.startContainer, range.startOffset);
-  const endOffset = getTextOffset(startBlock, range.endContainer, range.endOffset);
+  const startOffset = getBoundaryTextOffset(
+    startBlock,
+    range.startContainer,
+    range.startOffset,
+    "start"
+  );
+  const endOffset = getBoundaryTextOffset(
+    startBlock,
+    range.endContainer,
+    range.endOffset,
+    "end"
+  );
   const normalizedStart = Math.max(0, Math.min(startOffset, endOffset));
   const normalizedEnd = Math.max(normalizedStart, Math.max(startOffset, endOffset));
 
@@ -119,6 +140,66 @@ function getReviewBlock(node: Node): HTMLElement | null {
   return element?.closest<HTMLElement>("[data-review-block-id]") ?? null;
 }
 
+function getBoundaryReviewBlock(node: Node, offset: number, edge: BoundaryEdge): HTMLElement | null {
+  const directBlock = getReviewBlock(node);
+  if (directBlock) {
+    return directBlock;
+  }
+
+  if (!(node instanceof Element)) {
+    return null;
+  }
+
+  return edge === "start"
+    ? findReviewBlockFromChildren(node, offset, 1)
+    : findReviewBlockFromChildren(node, offset - 1, -1);
+}
+
+function findReviewBlockFromChildren(
+  element: Element,
+  startIndex: number,
+  step: 1 | -1
+): HTMLElement | null {
+  const children = Array.from(element.childNodes);
+  const firstIndex = step === 1
+    ? Math.max(0, startIndex)
+    : Math.min(children.length - 1, startIndex);
+
+  for (let index = firstIndex; index >= 0 && index < children.length; index += step) {
+    const block = findReviewBlockInSubtree(children[index], step === 1 ? "first" : "last");
+    if (block) {
+      return block;
+    }
+  }
+
+  return null;
+}
+
+function findReviewBlockInSubtree(
+  node: Node | undefined,
+  direction: "first" | "last"
+): HTMLElement | null {
+  if (!node) {
+    return null;
+  }
+
+  const element = node instanceof Element ? node : node.parentElement;
+  if (!element) {
+    return null;
+  }
+
+  if (element.matches("[data-review-block-id]")) {
+    return element as HTMLElement;
+  }
+
+  if (direction === "first") {
+    return element.querySelector<HTMLElement>("[data-review-block-id]");
+  }
+
+  const blocks = element.querySelectorAll<HTMLElement>("[data-review-block-id]");
+  return blocks[blocks.length - 1] ?? null;
+}
+
 function getBlockMeta(block: HTMLElement): { blockId: string; blockIndex: number } {
   const blockId = block.dataset.reviewBlockId ?? "block-0";
   const blockIndex = Number.parseInt(block.dataset.reviewBlockIndex ?? "0", 10);
@@ -138,13 +219,54 @@ function getHeadingFromBlock(block: HTMLElement, headings: Heading[]): Heading |
   );
 }
 
-function getTextOffset(root: HTMLElement, node: Node, offset: number): number {
+function getBoundaryTextOffset(
+  root: HTMLElement,
+  node: Node,
+  offset: number,
+  edge: BoundaryEdge
+): number {
+  const directOffset = getTextOffset(root, node, offset);
+  if (directOffset !== null) {
+    return directOffset;
+  }
+
+  const rootTextLength = root.textContent?.length ?? 0;
+  if (node instanceof Element && node.contains(root)) {
+    const childIndex = getContainingChildIndex(node, root);
+    if (childIndex !== null) {
+      return childIndex < offset ? rootTextLength : 0;
+    }
+  }
+
+  return edge === "start" ? 0 : rootTextLength;
+}
+
+function getTextOffset(root: HTMLElement, node: Node, offset: number): number | null {
+  if (node !== root && !root.contains(node)) {
+    return null;
+  }
+
   const range = document.createRange();
   range.selectNodeContents(root);
   try {
     range.setEnd(node, offset);
     return range.toString().length;
+  } catch {
+    return null;
   } finally {
     range.detach();
   }
+}
+
+function getContainingChildIndex(parent: Element, descendant: HTMLElement): number | null {
+  let child: Node = descendant;
+  while (child.parentNode && child.parentNode !== parent) {
+    child = child.parentNode;
+  }
+
+  if (child.parentNode !== parent) {
+    return null;
+  }
+
+  return Array.prototype.indexOf.call(parent.childNodes, child) as number;
 }

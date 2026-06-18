@@ -1,4 +1,4 @@
-export type AgentProvider = "codex" | "claude-code" | "custom-cli";
+export type AgentProvider = "codex" | "claude-code" | "workbuddy" | "custom-cli";
 
 export type AgentSessionRole = "source" | "successor";
 

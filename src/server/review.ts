@@ -283,7 +283,10 @@ function toReviewEventAgentRef(session: AgentSessionReference): ReviewEvent["tar
     role: session.role,
     sessionId: session.sessionId,
     cwd: session.cwd,
-    displayName: session.displayName
+    displayName: session.displayName,
+    configuredAt: session.configuredAt,
+    configuredBy: session.configuredBy,
+    configuredVia: session.configuredVia
   };
 }
 
@@ -437,7 +440,7 @@ function normalizeReviewFile(review: Partial<ReviewFile>, markdownPath: string):
   }
 
   const now = new Date().toISOString();
-  return {
+  return repairCompletedReviewEvents({
     version: REVIEW_VERSION,
     documentPath: markdownPath,
     documentId: getDocumentId(markdownPath),
@@ -445,7 +448,69 @@ function normalizeReviewFile(review: Partial<ReviewFile>, markdownPath: string):
     updatedAt: review.updatedAt ?? review.createdAt ?? now,
     annotations: Array.isArray(review.annotations) ? review.annotations : [],
     events: Array.isArray(review.events) ? review.events.map(normalizeReviewEvent) : []
-  };
+  });
+}
+
+function repairCompletedReviewEvents(review: ReviewFile): ReviewFile {
+  for (const event of review.events ?? []) {
+    if (event.deliveryStatus === "handled" || event.deliveryStatus === "ignored") {
+      continue;
+    }
+
+    const annotation = review.annotations.find((item) => item.id === event.annotationId);
+    if (!annotation || !hasCompletionEvidenceForEvent(annotation, event)) {
+      continue;
+    }
+
+    event.deliveryStatus = "handled";
+    event.lastError = undefined;
+    event.updatedAt = getCompletionEvidenceTime(annotation, event) ?? event.updatedAt;
+  }
+
+  return review;
+}
+
+function hasCompletionEvidenceForEvent(
+  annotation: ReviewAnnotation,
+  event: ReviewEvent
+): boolean {
+  const eventCreatedAt = parseReviewTime(event.createdAt);
+  const resolvedAt = parseReviewTime(annotation.resolvedAt ?? annotation.updatedAt);
+  if (annotation.status === "resolved" && resolvedAt >= eventCreatedAt) {
+    return true;
+  }
+
+  return annotation.replies.some(
+    (reply) =>
+      reply.author.type === "agent" &&
+      parseReviewTime(reply.createdAt) >= eventCreatedAt
+  );
+}
+
+function getCompletionEvidenceTime(
+  annotation: ReviewAnnotation,
+  event: ReviewEvent
+): string | undefined {
+  const eventCreatedAt = parseReviewTime(event.createdAt);
+  const evidenceTimes = [
+    annotation.status === "resolved" ? annotation.resolvedAt ?? annotation.updatedAt : undefined,
+    ...annotation.replies
+      .filter(
+        (reply) =>
+          reply.author.type === "agent" &&
+          parseReviewTime(reply.createdAt) >= eventCreatedAt
+      )
+      .map((reply) => reply.createdAt)
+  ].filter((value): value is string => Boolean(value));
+
+  return evidenceTimes.sort(
+    (left, right) => parseReviewTime(right) - parseReviewTime(left)
+  )[0];
+}
+
+function parseReviewTime(value: string | undefined): number {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function findAnnotation(review: ReviewFile, annotationId: string): ReviewAnnotation {
@@ -541,7 +606,7 @@ function markAnnotationEventHandled(
     return;
   }
 
-  if (!OPEN_EVENT_STATUSES.has(event.deliveryStatus)) {
+  if (!OPEN_EVENT_STATUSES.has(event.deliveryStatus) && event.deliveryStatus !== "failed") {
     return;
   }
 

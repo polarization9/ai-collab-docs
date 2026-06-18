@@ -61,7 +61,7 @@ const REVIEW_EVENT_STATUS_VALUES = [
   "failed"
 ] as const;
 const CODEX_TARGET_ROLE_VALUES = ["source", "successor"] as const;
-const AGENT_PROVIDER_VALUES = ["codex", "claude-code", "custom-cli"] as const;
+const AGENT_PROVIDER_VALUES = ["codex", "claude-code", "workbuddy", "custom-cli"] as const;
 const AGENT_SESSION_ROLE_VALUES = ["source", "successor"] as const;
 
 export function registerReviewerTools(server: McpServer, markdownPath?: string): void {
@@ -179,7 +179,9 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           .string()
           .min(1)
           .optional()
-          .describe("Optional session id if the Agent adapter provides it."),
+          .describe(
+            "Agent session id. Required for sessionful providers such as Codex, Claude Code, and WorkBuddy when Margent cannot detect it automatically."
+          ),
         cwd: z.string().min(1).optional().describe("Optional Agent workspace path."),
         displayName: z.string().min(1).optional().describe("Optional Agent display name."),
         autoSendNewAnnotations: z

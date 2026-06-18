@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   AgentProvider,
   AgentSessionReference,
@@ -26,7 +28,7 @@ import {
 
 type SendToAgentInput = {
   provider: AgentProvider;
-  sessionId: string;
+  sessionId?: string;
   cwd?: string;
   documentPath: string;
   annotationId: string;
@@ -35,7 +37,7 @@ type SendToAgentInput = {
   prompt: string;
   onTurnStarted?: (delivery: {
     provider: AgentProvider;
-    sessionId: string;
+    sessionId?: string;
     turnId?: string;
     deliveryId: string;
   }) => Promise<void>;
@@ -53,15 +55,29 @@ type SendToAgentResult = {
 type AgentBridgeAdapter = {
   provider: AgentProvider;
   name: NonNullable<ReviewEvent["delivery"]>["adapter"];
+  requiresSessionId?: boolean;
   isAvailable(): Promise<boolean>;
   send(input: SendToAgentInput): Promise<SendToAgentResult>;
 };
 
 const APP_SERVER_REQUEST_TIMEOUT_MS = 60000;
 const APP_SERVER_TURN_TIMEOUT_MS = getTurnTimeoutMs();
+const CLI_AGENT_OUTPUT_LIMIT = 96_000;
+const MARGENT_MCP_ALLOWED_TOOLS = [
+  "mcp__margent__reviewer_get_annotation_context",
+  "mcp__margent__reviewer_add_annotation_reply",
+  "mcp__margent__reviewer_apply_document_edit",
+  "mcp__margent__reviewer_update_annotation_status",
+  "mcp__margent__reviewer_mark_review_event_handled",
+  "mcp__margent__reviewer_list_review_events",
+  "mcp__margent__reviewer_get_review_event",
+  "mcp__margent__reviewer_bind_current_agent_session"
+];
 
 const bridgeAdapters: AgentBridgeAdapter[] = [
-  createCodexAppServerAdapter()
+  createCodexAppServerAdapter(),
+  createClaudeCodeCliAdapter(),
+  createWorkBuddyCliAdapter()
 ];
 
 const OPEN_EVENT_STATUSES = new Set<ReviewEvent["deliveryStatus"]>([
@@ -83,12 +99,12 @@ export async function sendAnnotationToAgent(
   annotationId: string
 ): Promise<BridgeSendAnnotationResponse> {
   const target = await getCurrentTarget(markdownPath);
-  if (!target?.sessionId) {
+  if (!target) {
     return {
       ok: false,
       review: await loadReviewFile(markdownPath),
       needsBinding: true,
-      error: "No Agent target session is bound for this document."
+      error: "No Agent target is bound for this document."
     };
   }
 
@@ -165,25 +181,23 @@ export async function dispatchReviewEvents(
   }
 
   const target = await resolveEventTarget(markdownPath, queuedEvent);
-  if (!target?.sessionId) {
+  if (!target) {
     const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
       deliveryStatus: "failed",
-      lastError: "No Agent target session is bound for this document."
+      lastError: "No Agent target is bound for this document."
     });
     return {
       ok: false,
       event: getEventFromReview(review, queuedEvent.id),
       review,
       needsBinding: true,
-      error: "No Agent target session is bound for this document."
+      error: "No Agent target is bound for this document."
     };
   }
 
   const adapter = await selectBridgeAdapter(target.provider);
-  await markReviewEventDelivering(markdownPath, queuedEvent.id, adapter?.name);
-
   if (!adapter) {
-    const error = `No available Agent Bridge adapter is configured for provider: ${target.provider}.`;
+    const error = getUnavailableBridgeAdapterError(target.provider);
     const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
       deliveryStatus: "failed",
       lastError: error
@@ -195,6 +209,24 @@ export async function dispatchReviewEvents(
       error
     };
   }
+
+  const requiresSessionId = adapter.requiresSessionId ?? true;
+  if (requiresSessionId && !target.sessionId) {
+    const error = `No ${target.displayName ?? target.provider} target session is bound for this document.`;
+    const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
+      deliveryStatus: "failed",
+      lastError: error
+    });
+    return {
+      ok: false,
+      event: getEventFromReview(review, queuedEvent.id),
+      review,
+      needsBinding: true,
+      error
+    };
+  }
+
+  await markReviewEventDelivering(markdownPath, queuedEvent.id, adapter.name);
 
   const prompt = createBridgePrompt({
     documentPath: markdownPath,
@@ -245,6 +277,15 @@ export async function dispatchReviewEvents(
   });
 
   if (!result.ok) {
+    const completedReview = await markEventHandledIfReviewChanged(markdownPath, queuedEvent.id);
+    if (completedReview) {
+      return {
+        ok: true,
+        event: getEventFromReview(completedReview, queuedEvent.id),
+        review: completedReview
+      };
+    }
+
     const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
       deliveryStatus: "failed",
       lastError: result.error ?? "Agent Bridge delivery failed."
@@ -262,6 +303,53 @@ export async function dispatchReviewEvents(
   const latestEvent = getEventFromReview(latestReview, queuedEvent.id);
   const nextStatus =
     latestEvent.deliveryStatus === "delivering" ? "sent" : latestEvent.deliveryStatus;
+
+  if (result.sessionId && (await shouldPersistResultSession(markdownPath, target, result))) {
+    await updateAgentDocumentLink(markdownPath, {
+      target: {
+        ...target,
+        sessionId: result.sessionId,
+        turnId: result.turnId ?? target.turnId,
+        configuredAt: target.configuredAt ?? now,
+        configuredBy: target.configuredBy ?? "agent",
+        configuredVia: target.configuredVia ?? "mcp-bind-instruction"
+      }
+    });
+  }
+
+  if (requiresMcpHandledCompletion(adapter.name) && OPEN_EVENT_STATUSES.has(latestEvent.deliveryStatus)) {
+    const completedReview = await markEventHandledIfReviewChanged(markdownPath, queuedEvent.id);
+    if (completedReview) {
+      return {
+        ok: true,
+        event: getEventFromReview(completedReview, queuedEvent.id),
+        review: completedReview
+      };
+    }
+
+    const error = `${getBridgeAdapterDisplayName(adapter.name)} finished, but it did not mark this Margent event handled through MCP.`;
+    const failedReview = await updateReviewEvent(markdownPath, queuedEvent.id, {
+      deliveryStatus: "failed",
+      lastError: error,
+      delivery: {
+        ...latestEvent.delivery,
+        adapter: adapter.name,
+        provider: result.provider,
+        sessionId: result.sessionId,
+        threadId: latestEvent.delivery?.threadId,
+        turnId: result.turnId,
+        deliveryId: result.deliveryId,
+        lastAttemptAt: now
+      }
+    });
+    return {
+      ok: false,
+      event: getEventFromReview(failedReview, queuedEvent.id),
+      review: failedReview,
+      error
+    };
+  }
+
   const review = await updateReviewEvent(markdownPath, queuedEvent.id, {
     deliveryStatus: nextStatus,
     lastError: undefined,
@@ -289,6 +377,47 @@ export async function dispatchReviewEvents(
     event: getEventFromReview(review, queuedEvent.id),
     review
   };
+}
+
+async function markEventHandledIfReviewChanged(
+  markdownPath: string,
+  eventId: string
+): Promise<ReviewFile | null> {
+  const review = await loadReviewFile(markdownPath);
+  const event = getEventFromReview(review, eventId);
+  if (event.deliveryStatus === "handled") {
+    return review;
+  }
+  if (!OPEN_EVENT_STATUSES.has(event.deliveryStatus)) {
+    return null;
+  }
+
+  const annotation = review.annotations.find((item) => item.id === event.annotationId);
+  if (!annotation) {
+    return null;
+  }
+
+  const eventCreatedAt = parseTime(event.createdAt);
+  const resolvedAt = parseTime(annotation.resolvedAt ?? annotation.updatedAt);
+  const wasResolvedForEvent =
+    annotation.status === "resolved" && resolvedAt >= eventCreatedAt;
+  const hasAgentReplyForEvent = annotation.replies.some(
+    (reply) => reply.author.type === "agent" && parseTime(reply.createdAt) >= eventCreatedAt
+  );
+
+  if (!wasResolvedForEvent && !hasAgentReplyForEvent) {
+    return null;
+  }
+
+  return updateReviewEvent(markdownPath, eventId, {
+    deliveryStatus: "handled",
+    lastError: undefined
+  });
+}
+
+function parseTime(value: string | undefined): number {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function dispatchReviewEventsInBackground(markdownPath: string): void {
@@ -413,21 +542,431 @@ export function createBridgePrompt(input: {
   return base.join("\n");
 }
 
+function appendClaudeCodePromptInstructions(prompt: string): string {
+  return [
+    prompt,
+    "",
+    "Claude Code 额外说明：",
+    "- 你正在 Claude Code CLI 非交互任务中处理这条 Margent 批注。",
+    "- 必须通过 Margent MCP 读取 annotation context 并写回结果。",
+    "- 如果没有看到 Margent MCP 工具，请直接说明 MCP 不可用，不要假装处理完成。"
+  ].join("\n");
+}
+
+function appendWorkBuddyPromptInstructions(prompt: string): string {
+  return [
+    prompt,
+    "",
+    "WorkBuddy 额外说明：",
+    "- 你正在 WorkBuddy / CodeBuddy CLI 非交互任务中处理这条 Margent 批注。",
+    "- 必须真实调用 Margent MCP 工具读取 annotation context 并写回结果。",
+    "- 不要在普通文本里输出 <tool_call>、<tool_result> 或 JSON 伪工具调用；那不会真的处理事件。",
+    "- 可用工具名以 mcp__margent__reviewer_ 开头，例如 mcp__margent__reviewer_get_annotation_context。",
+    "- 不存在 mcp__margent__get_annotation，也不存在 mcp__margent__resolve_annotation。",
+    "- 文档修改必须通过 mcp__margent__reviewer_apply_document_edit 完成，不要绕过 Margent 直接使用内置文件编辑工具。",
+    "- 如果不能真实调用 Margent MCP 工具，请直接说明 MCP 不可用，不要假装处理完成。"
+  ].join("\n");
+}
+
+type AgentMcpConfigResult =
+  | {
+      ok: true;
+      path: string;
+      directory: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+async function createAgentMcpConfig(
+  documentPath: string,
+  directoryPrefix: string
+): Promise<AgentMcpConfigResult> {
+  const mcpCliPath = await resolveMcpCliPath();
+  if (!mcpCliPath) {
+    return {
+      ok: false,
+      error:
+        "Margent MCP CLI was not found. Run npm run build before using Agent delivery."
+    };
+  }
+
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), directoryPrefix));
+  const configPath = path.join(directory, "mcp.json");
+  const config = {
+    mcpServers: {
+      margent: {
+        command: process.execPath,
+        args: [mcpCliPath, documentPath]
+      }
+    }
+  };
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  return {
+    ok: true,
+    path: configPath,
+    directory
+  };
+}
+
+async function cleanupAgentMcpConfig(config: Extract<AgentMcpConfigResult, { ok: true }>): Promise<void> {
+  await fs.rm(config.directory, { recursive: true, force: true });
+}
+
+type CliAgentProcessResult = {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
+
+async function runClaudeCodePrint(input: {
+  command: string;
+  cwd: string;
+  prompt: string;
+  mcpConfigPath: string;
+  sessionId: string;
+}): Promise<CliAgentProcessResult> {
+  const args = [
+    "--resume",
+    input.sessionId,
+    "-p",
+    input.prompt,
+    "--output-format",
+    "json",
+    "--mcp-config",
+    input.mcpConfigPath,
+    "--strict-mcp-config",
+    "--permission-mode",
+    "dontAsk",
+    "--allowedTools",
+    MARGENT_MCP_ALLOWED_TOOLS.join(",")
+  ];
+
+  return runProcessWithTimeout({
+    command: input.command,
+    args,
+    cwd: input.cwd,
+    timeoutMs: APP_SERVER_TURN_TIMEOUT_MS,
+    outputLimit: CLI_AGENT_OUTPUT_LIMIT
+  });
+}
+
+async function runWorkBuddyPrint(input: {
+  command: string;
+  cwd: string;
+  prompt: string;
+  mcpConfigPath: string;
+  sessionId: string;
+}): Promise<CliAgentProcessResult> {
+  const args = [
+    "--session-id",
+    input.sessionId,
+    "-p",
+    input.prompt,
+    "--output-format",
+    "json",
+    "--mcp-config",
+    input.mcpConfigPath,
+    "--strict-mcp-config",
+    "--settings",
+    JSON.stringify({
+      enableAllProjectMcpServers: true,
+      permissions: {
+        allow: MARGENT_MCP_ALLOWED_TOOLS
+      }
+    }),
+    "-y",
+    "--permission-mode",
+    "bypassPermissions",
+    "--allowedTools",
+    MARGENT_MCP_ALLOWED_TOOLS.join(",")
+  ];
+
+  return runProcessWithTimeout({
+    command: input.command,
+    args,
+    cwd: input.cwd,
+    timeoutMs: APP_SERVER_TURN_TIMEOUT_MS,
+    outputLimit: CLI_AGENT_OUTPUT_LIMIT
+  });
+}
+
+function runProcessWithTimeout(input: {
+  command: string;
+  args: string[];
+  cwd: string;
+  timeoutMs: number;
+  outputLimit: number;
+}): Promise<CliAgentProcessResult> {
+  return new Promise((resolve) => {
+    const child = spawn(input.command, input.args, {
+      cwd: input.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, 1500).unref();
+    }, input.timeoutMs);
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout = appendLimitedOutput(stdout, chunk, input.outputLimit);
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr = appendLimitedOutput(stderr, chunk, input.outputLimit);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      resolve({
+        exitCode: null,
+        signal: null,
+        stdout,
+        stderr: appendLimitedOutput(stderr, error.message, input.outputLimit),
+        timedOut
+      });
+    });
+    child.on("close", (exitCode, signal) => {
+      clearTimeout(timeout);
+      resolve({
+        exitCode,
+        signal,
+        stdout,
+        stderr,
+        timedOut
+      });
+    });
+  });
+}
+
+function appendLimitedOutput(existing: string, chunk: string, limit: number): string {
+  const next = existing + chunk;
+  if (next.length <= limit) {
+    return next;
+  }
+  return next.slice(next.length - limit);
+}
+
+function parseClaudeCodeJsonOutput(output: string): Record<string, unknown> | null {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseWorkBuddyJsonOutput(output: string): Record<string, unknown> | null {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter(isRecord)
+        .reverse()
+        .find((item) => item.type === "result") ?? null;
+    }
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractClaudeCodeSessionId(output: Record<string, unknown> | null): string | undefined {
+  return normalizeOptionalString(output?.session_id) ?? normalizeOptionalString(output?.sessionId);
+}
+
+function extractClaudeCodeTurnId(output: Record<string, unknown> | null): string | undefined {
+  return (
+    normalizeOptionalString(output?.turn_id) ??
+    normalizeOptionalString(output?.turnId) ??
+    normalizeOptionalString(output?.message_id) ??
+    normalizeOptionalString(output?.messageId)
+  );
+}
+
+function formatClaudeCodeProcessError(
+  result: CliAgentProcessResult,
+  parsed: Record<string, unknown> | null
+): string {
+  if (result.timedOut) {
+    return `Claude Code delivery timed out after ${APP_SERVER_TURN_TIMEOUT_MS}ms.`;
+  }
+
+  const parsedError = parsed ? formatClaudeCodeResultError(parsed) : undefined;
+  if (parsedError) {
+    return parsedError;
+  }
+
+  const combined = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n");
+  if (combined.includes("Not logged in") || combined.includes("not logged in")) {
+    return "Claude Code is not authenticated. Open Claude Code once or configure its provider credentials.";
+  }
+  if (combined.includes("error_max_budget_usd")) {
+    return "Claude Code model request exceeded the configured budget limit.";
+  }
+
+  return (
+    truncateForUser(combined) ||
+    `Claude Code CLI exited with ${result.exitCode ?? result.signal ?? "an unknown error"}.`
+  );
+}
+
+function formatWorkBuddyProcessError(
+  result: CliAgentProcessResult,
+  parsed: Record<string, unknown> | null
+): string {
+  if (result.timedOut) {
+    return `WorkBuddy delivery timed out after ${APP_SERVER_TURN_TIMEOUT_MS}ms.`;
+  }
+
+  const parsedError = parsed ? formatWorkBuddyResultError(parsed) : undefined;
+  if (parsedError) {
+    return parsedError;
+  }
+
+  const combined = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n");
+  if (combined.includes("No conversation found with session ID")) {
+    return "WorkBuddy could not find the bound session. Rebind this document to a current WorkBuddy session and retry.";
+  }
+  if (combined.includes("not authenticated") || combined.includes("Not logged in")) {
+    return "WorkBuddy is not authenticated. Open WorkBuddy once or configure its provider credentials.";
+  }
+
+  return (
+    truncateForUser(combined) ||
+    `WorkBuddy CLI exited with ${result.exitCode ?? result.signal ?? "an unknown error"}.`
+  );
+}
+
+function formatClaudeCodeResultError(output: Record<string, unknown>): string {
+  const result = normalizeOptionalString(output.result);
+  const error = normalizeOptionalString(output.error);
+  const subtype = normalizeOptionalString(output.subtype);
+  return (
+    truncateForUser(error ?? result) ??
+    (subtype ? `Claude Code returned ${subtype}.` : "Claude Code delivery failed.")
+  );
+}
+
+function formatWorkBuddyResultError(output: Record<string, unknown>): string {
+  const result = normalizeOptionalString(output.result);
+  const error = normalizeOptionalString(output.error);
+  const subtype = normalizeOptionalString(output.subtype);
+  return (
+    truncateForUser(error ?? result) ??
+    (subtype ? `WorkBuddy returned ${subtype}.` : "WorkBuddy delivery failed.")
+  );
+}
+
+function formatClaudeCodeError(error: unknown): string {
+  if (error instanceof Error) {
+    return truncateForUser(error.message) ?? "Claude Code delivery failed.";
+  }
+  return truncateForUser(String(error)) ?? "Claude Code delivery failed.";
+}
+
+function formatWorkBuddyError(error: unknown): string {
+  if (error instanceof Error) {
+    return truncateForUser(error.message) ?? "WorkBuddy delivery failed.";
+  }
+  return truncateForUser(String(error)) ?? "WorkBuddy delivery failed.";
+}
+
+function isWorkBuddyProcessFailure(
+  result: CliAgentProcessResult,
+  parsed: Record<string, unknown> | null
+): boolean {
+  if (result.exitCode !== 0 || result.timedOut) {
+    return true;
+  }
+  if (parsed?.is_error === true) {
+    return true;
+  }
+  const combined = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n");
+  if (combined.includes("No conversation found with session ID")) {
+    return true;
+  }
+  return !parsed && Boolean(combined);
+}
+
+function truncateForUser(value: string | undefined): string | undefined {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.length > 1200 ? `${normalized.slice(0, 1200)}…` : normalized;
+}
+
 async function getCurrentTarget(markdownPath: string): Promise<AgentSessionReference | null> {
   const link = await loadAgentDocumentLink(markdownPath);
   return resolveAgentTarget(link);
+}
+
+async function shouldPersistResultSession(
+  markdownPath: string,
+  target: AgentSessionReference,
+  result: SendToAgentResult
+): Promise<boolean> {
+  if (!result.sessionId || target.provider !== result.provider) {
+    return false;
+  }
+
+  const currentTarget = await getCurrentTarget(markdownPath);
+  if (!currentTarget) {
+    return false;
+  }
+
+  if (currentTarget.provider !== target.provider) {
+    return false;
+  }
+
+  if (target.role && currentTarget.role !== target.role) {
+    return false;
+  }
+
+  if (target.sessionId) {
+    return currentTarget.sessionId === target.sessionId;
+  }
+
+  if (target.configuredAt) {
+    return currentTarget.configuredAt === target.configuredAt;
+  }
+
+  return !currentTarget.sessionId && (!target.cwd || currentTarget.cwd === target.cwd);
 }
 
 export async function resolveEventTarget(
   markdownPath: string,
   event: ReviewEvent
 ): Promise<AgentSessionReference | null> {
-  if (event.targetAgent?.sessionId) {
+  if (event.targetAgent) {
     const currentTarget = await getCurrentTarget(markdownPath);
     const currentCwd =
       currentTarget?.provider === event.targetAgent.provider &&
-      currentTarget.sessionId === event.targetAgent.sessionId &&
-      currentTarget.role === event.targetAgent.role
+      currentTarget.role === event.targetAgent.role &&
+      (!event.targetAgent.sessionId || currentTarget.sessionId === event.targetAgent.sessionId)
         ? currentTarget.cwd
         : undefined;
     return {
@@ -435,7 +974,10 @@ export async function resolveEventTarget(
       role: event.targetAgent.role,
       sessionId: event.targetAgent.sessionId,
       cwd: event.targetAgent.cwd ?? currentCwd,
-      displayName: event.targetAgent.displayName
+      displayName: event.targetAgent.displayName,
+      configuredAt: event.targetAgent.configuredAt,
+      configuredBy: event.targetAgent.configuredBy,
+      configuredVia: event.targetAgent.configuredVia
     };
   }
 
@@ -484,10 +1026,42 @@ async function selectBridgeAdapter(provider: AgentProvider): Promise<AgentBridge
   return null;
 }
 
+function getUnavailableBridgeAdapterError(provider: AgentProvider): string {
+  if (provider === "workbuddy") {
+    return "WorkBuddy CLI is not available. Open WorkBuddy once, install its CodeBuddy CLI, or set WORKBUDDY_CLI_PATH / CODEBUDDY_CLI_PATH.";
+  }
+  if (provider === "claude-code") {
+    return "Claude Code CLI is not available. Install Claude Code or set CLAUDE_CODE_CLI_PATH.";
+  }
+  if (provider === "codex") {
+    return "Codex CLI is not available. Install Codex Desktop or set CODEX_CLI_PATH.";
+  }
+  return `No available Agent Bridge adapter is configured for provider: ${provider}.`;
+}
+
+function requiresMcpHandledCompletion(
+  adapterName: NonNullable<ReviewEvent["delivery"]>["adapter"]
+): boolean {
+  return adapterName === "claude-code-cli" || adapterName === "workbuddy-codebuddy-cli";
+}
+
+function getBridgeAdapterDisplayName(
+  adapterName: NonNullable<ReviewEvent["delivery"]>["adapter"]
+): string {
+  if (adapterName === "claude-code-cli") {
+    return "Claude Code";
+  }
+  if (adapterName === "workbuddy-codebuddy-cli") {
+    return "WorkBuddy";
+  }
+  return "Agent";
+}
+
 function createCodexAppServerAdapter(): AgentBridgeAdapter {
   return {
     provider: "codex",
     name: "codex-app-server",
+    requiresSessionId: true,
     async isAvailable() {
       return Boolean(await resolveCodexCommand());
     },
@@ -499,6 +1073,13 @@ function createCodexAppServerAdapter(): AgentBridgeAdapter {
           provider: "codex",
           error:
             "Codex CLI was not found. Install Codex Desktop or set CODEX_CLI_PATH."
+        };
+      }
+      if (!input.sessionId) {
+        return {
+          ok: false,
+          provider: "codex",
+          error: "No Codex target session is bound for this document."
         };
       }
 
@@ -567,6 +1148,178 @@ function createCodexAppServerAdapter(): AgentBridgeAdapter {
         };
       } finally {
         client.close();
+      }
+    }
+  };
+}
+
+function createClaudeCodeCliAdapter(): AgentBridgeAdapter {
+  return {
+    provider: "claude-code",
+    name: "claude-code-cli",
+    requiresSessionId: true,
+    async isAvailable() {
+      return Boolean(await resolveClaudeCodeCommand());
+    },
+    async send(input) {
+      const command = await resolveClaudeCodeCommand();
+      if (!command) {
+        return {
+          ok: false,
+          provider: "claude-code",
+          error:
+            "Claude Code CLI was not found. Install Claude Code or set CLAUDE_CODE_CLI_PATH."
+        };
+      }
+      const sessionId = input.sessionId;
+      if (!sessionId) {
+        return {
+          ok: false,
+          provider: "claude-code",
+          error: "No Claude Code target session is bound for this document."
+        };
+      }
+
+      const mcpConfig = await createAgentMcpConfig(input.documentPath, "margent-claude-mcp-");
+      if (!mcpConfig.ok) {
+        return {
+          ok: false,
+          provider: "claude-code",
+          error: mcpConfig.error
+        };
+      }
+
+      const deliveryId = `claude-code-cli:${input.eventId}`;
+      await input.onTurnStarted?.({
+        provider: "claude-code",
+        sessionId,
+        deliveryId
+      });
+
+      try {
+        const result = await runClaudeCodePrint({
+          command,
+          cwd: input.cwd ?? path.dirname(input.documentPath),
+          prompt: appendClaudeCodePromptInstructions(input.prompt),
+          mcpConfigPath: mcpConfig.path,
+          sessionId
+        });
+
+        const parsed = parseClaudeCodeJsonOutput(result.stdout);
+        if (result.exitCode !== 0) {
+          return {
+            ok: false,
+            provider: "claude-code",
+            error: formatClaudeCodeProcessError(result, parsed)
+          };
+        }
+
+        if (parsed && parsed.is_error === true) {
+          return {
+            ok: false,
+            provider: "claude-code",
+            sessionId: extractClaudeCodeSessionId(parsed) ?? sessionId,
+            deliveryId,
+            error: formatClaudeCodeResultError(parsed)
+          };
+        }
+
+        return {
+          ok: true,
+          provider: "claude-code",
+          sessionId: extractClaudeCodeSessionId(parsed) ?? sessionId,
+          turnId: extractClaudeCodeTurnId(parsed),
+          deliveryId
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          provider: "claude-code",
+          error: formatClaudeCodeError(error)
+        };
+      } finally {
+        await cleanupAgentMcpConfig(mcpConfig);
+      }
+    }
+  };
+}
+
+function createWorkBuddyCliAdapter(): AgentBridgeAdapter {
+  return {
+    provider: "workbuddy",
+    name: "workbuddy-codebuddy-cli",
+    requiresSessionId: true,
+    async isAvailable() {
+      return Boolean(await resolveWorkBuddyCommand());
+    },
+    async send(input) {
+      const command = await resolveWorkBuddyCommand();
+      if (!command) {
+        return {
+          ok: false,
+          provider: "workbuddy",
+          error:
+            "WorkBuddy CodeBuddy CLI was not found. Install WorkBuddy or set WORKBUDDY_CLI_PATH / CODEBUDDY_CLI_PATH."
+        };
+      }
+      const sessionId = input.sessionId;
+      if (!sessionId) {
+        return {
+          ok: false,
+          provider: "workbuddy",
+          error: "No WorkBuddy target session is bound for this document."
+        };
+      }
+
+      const mcpConfig = await createAgentMcpConfig(input.documentPath, "margent-workbuddy-mcp-");
+      if (!mcpConfig.ok) {
+        return {
+          ok: false,
+          provider: "workbuddy",
+          error: mcpConfig.error
+        };
+      }
+
+      const deliveryId = `workbuddy-codebuddy-cli:${input.eventId}`;
+      await input.onTurnStarted?.({
+        provider: "workbuddy",
+        sessionId,
+        deliveryId
+      });
+
+      try {
+        const result = await runWorkBuddyPrint({
+          command,
+          cwd: input.cwd ?? path.dirname(input.documentPath),
+          prompt: appendWorkBuddyPromptInstructions(input.prompt),
+          mcpConfigPath: mcpConfig.path,
+          sessionId
+        });
+
+        const parsed = parseWorkBuddyJsonOutput(result.stdout);
+        if (isWorkBuddyProcessFailure(result, parsed)) {
+          return {
+            ok: false,
+            provider: "workbuddy",
+            error: formatWorkBuddyProcessError(result, parsed)
+          };
+        }
+
+        return {
+          ok: true,
+          provider: "workbuddy",
+          sessionId: extractClaudeCodeSessionId(parsed) ?? sessionId,
+          turnId: extractClaudeCodeTurnId(parsed),
+          deliveryId
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          provider: "workbuddy",
+          error: formatWorkBuddyError(error)
+        };
+      } finally {
+        await cleanupAgentMcpConfig(mcpConfig);
       }
     }
   };
@@ -905,6 +1658,127 @@ function getCodexCommandCandidates(): string[] {
     ...getPathExecutableCandidates("codex")
   ];
   return candidates.filter((item): item is string => Boolean(item));
+}
+
+let cachedClaudeCodeCommand: string | null | undefined;
+
+async function resolveClaudeCodeCommand(): Promise<string | null> {
+  if (process.env.MARGENT_DISABLE_CLAUDE_CODE_BRIDGE === "1") {
+    return null;
+  }
+
+  if (cachedClaudeCodeCommand !== undefined) {
+    return cachedClaudeCodeCommand;
+  }
+
+  for (const candidate of await getClaudeCodeCommandCandidates()) {
+    if (await pathExists(candidate)) {
+      cachedClaudeCodeCommand = candidate;
+      return cachedClaudeCodeCommand;
+    }
+  }
+
+  cachedClaudeCodeCommand = null;
+  return cachedClaudeCodeCommand;
+}
+
+async function getClaudeCodeCommandCandidates(): Promise<string[]> {
+  const candidates = [
+    normalizeOptionalString(process.env.CLAUDE_CODE_CLI_PATH),
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+    ...(await getNvmExecutableCandidates("claude")),
+    ...getPathExecutableCandidates("claude")
+  ];
+  return [...new Set(candidates.filter((item): item is string => Boolean(item)))];
+}
+
+let cachedWorkBuddyCommand: string | null | undefined;
+
+async function resolveWorkBuddyCommand(): Promise<string | null> {
+  if (process.env.MARGENT_DISABLE_WORKBUDDY_BRIDGE === "1") {
+    return null;
+  }
+
+  if (cachedWorkBuddyCommand !== undefined) {
+    return cachedWorkBuddyCommand;
+  }
+
+  for (const candidate of await getWorkBuddyCommandCandidates()) {
+    if (await pathExists(candidate)) {
+      cachedWorkBuddyCommand = candidate;
+      return cachedWorkBuddyCommand;
+    }
+  }
+
+  cachedWorkBuddyCommand = null;
+  return cachedWorkBuddyCommand;
+}
+
+async function getWorkBuddyCommandCandidates(): Promise<string[]> {
+  const candidates = [
+    normalizeOptionalString(process.env.WORKBUDDY_CLI_PATH),
+    normalizeOptionalString(process.env.CODEBUDDY_CLI_PATH),
+    process.platform === "darwin"
+      ? "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy"
+      : undefined,
+    process.platform === "darwin"
+      ? path.join(
+          os.homedir(),
+          "Applications",
+          "WorkBuddy.app",
+          "Contents",
+          "Resources",
+          "app.asar.unpacked",
+          "cli",
+          "bin",
+          "codebuddy"
+        )
+      : undefined,
+    ...(await getNvmExecutableCandidates("codebuddy")),
+    ...(await getNvmExecutableCandidates("cbc")),
+    ...getPathExecutableCandidates("codebuddy"),
+    ...getPathExecutableCandidates("cbc")
+  ];
+  return [...new Set(candidates.filter((item): item is string => Boolean(item)))];
+}
+
+let cachedMcpCliPath: string | null | undefined;
+
+async function resolveMcpCliPath(): Promise<string | null> {
+  if (cachedMcpCliPath !== undefined) {
+    return cachedMcpCliPath;
+  }
+
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    normalizeOptionalString(process.env.MARGENT_MCP_CLI_PATH),
+    path.resolve(moduleDir, "../mcpCli.js"),
+    path.resolve(process.cwd(), "dist/mcpCli.js")
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && (await pathExists(candidate))) {
+      cachedMcpCliPath = candidate;
+      return cachedMcpCliPath;
+    }
+  }
+
+  cachedMcpCliPath = null;
+  return cachedMcpCliPath;
+}
+
+async function getNvmExecutableCandidates(command: string): Promise<string[]> {
+  const versionsDirectory = path.join(os.homedir(), ".nvm", "versions", "node");
+  try {
+    const versions = await fs.readdir(versionsDirectory);
+    return versions
+      .sort()
+      .reverse()
+      .map((version) => path.join(versionsDirectory, version, "bin", command));
+  } catch {
+    return [];
+  }
 }
 
 function getPathExecutableCandidates(command: string): string[] {

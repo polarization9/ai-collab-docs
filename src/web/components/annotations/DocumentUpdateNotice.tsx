@@ -8,7 +8,7 @@ import {
 import type { DocumentMergeConflict } from "../../../shared/editTypes";
 import { useI18n, type LocaleKey } from "../../i18n";
 
-export type DocumentUpdateSource = "codex" | "external" | "unknown";
+export type DocumentUpdateSource = "agent" | "external" | "unknown";
 
 export type DocumentUpdateState =
   | { kind: "hidden" }
@@ -142,21 +142,21 @@ function autoUpdatedLabel(
   t: (key: LocaleKey) => string
 ): string {
   if (merged) {
-    return source === "codex"
-      ? t("documentUpdate.codexMerged")
+    return source === "agent"
+      ? t("documentUpdate.agentMerged")
       : t("documentUpdate.documentMerged");
   }
-  return source === "codex" ? t("documentUpdate.codexUpdated") : t("documentUpdate.documentUpdated");
+  return source === "agent" ? t("documentUpdate.agentUpdated") : t("documentUpdate.documentUpdated");
 }
 
 function updateAvailableLabel(source: DocumentUpdateSource, t: (key: LocaleKey) => string): string {
-  return source === "codex"
-    ? t("documentUpdate.codexAvailable")
+  return source === "agent"
+    ? t("documentUpdate.agentAvailable")
     : t("documentUpdate.documentAvailable");
 }
 
 function conflictLabel(source: DocumentUpdateSource, t: (key: LocaleKey) => string): string {
-  return source === "codex"
-    ? t("documentUpdate.codexConflict")
+  return source === "agent"
+    ? t("documentUpdate.agentConflict")
     : t("documentUpdate.documentConflict");
 }

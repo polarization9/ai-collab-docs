@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { CodexDocumentLink } from "../shared/codexTypes.js";
 import {
-  applyDiscoveredCodexSource,
-  loadCodexDocumentLink
-} from "./codexLink.js";
+  createDiscoveryEvidence,
+  inferDiscoveryCandidateRole,
+  type AgentDiscoveryCandidate
+} from "./agentDiscoveryTypes.js";
 
-type SessionCandidate = {
+type CodexSessionCandidate = {
   threadId: string;
   cwd?: string;
   updatedAt: string;
@@ -17,46 +17,31 @@ type SessionCandidate = {
 
 const MAX_SESSION_FILES = 40;
 
-export async function discoverCodexSourceForDocument(
+export async function findCodexDiscoveryCandidates(
   markdownPath: string
-): Promise<CodexDocumentLink | null> {
-  const existing = await loadCodexDocumentLink(markdownPath);
-  if (existing?.source?.threadId) {
-    return existing;
-  }
-
+): Promise<AgentDiscoveryCandidate[]> {
   const candidates = await findExactPathCandidates(markdownPath);
-  if (candidates.length !== 1) {
-    return null;
-  }
-
-  const candidate = candidates[0];
-  const now = new Date().toISOString();
-  return applyDiscoveredCodexSource(
-    markdownPath,
-    {
-      type: "codex",
-      threadId: candidate.threadId,
-      cwd: candidate.cwd,
-      createdAt: now,
-      updatedAt: candidate.updatedAt
-    },
-    {
-      type: "source",
-      threadId: candidate.threadId,
-      cwd: candidate.cwd,
-      configuredAt: now,
-      configuredBy: "codex",
-      configuredVia: "local-log-discovery"
-    }
-  );
+  return candidates.map((candidate) => ({
+    provider: "codex",
+    role: inferDiscoveryCandidateRole(candidate.evidence),
+    sessionId: candidate.threadId,
+    cwd: candidate.cwd,
+    updatedAt: candidate.updatedAt,
+    filePath: candidate.filePath,
+    displayName: "Codex",
+    evidence: candidate.evidence
+  }));
 }
 
-async function findExactPathCandidates(markdownPath: string): Promise<SessionCandidate[]> {
+async function findExactPathCandidates(
+  markdownPath: string
+): Promise<Array<CodexSessionCandidate & { evidence: AgentDiscoveryCandidate["evidence"] }>> {
   const sessionFiles = await listRecentSessionFiles();
   const normalizedPath = path.resolve(markdownPath);
   const escapedPath = JSON.stringify(normalizedPath).slice(1, -1);
-  const candidates: SessionCandidate[] = [];
+  const candidates: Array<
+    CodexSessionCandidate & { evidence: AgentDiscoveryCandidate["evidence"] }
+  > = [];
 
   for (const filePath of sessionFiles) {
     const raw = await readFileSafely(filePath);
@@ -68,10 +53,16 @@ async function findExactPathCandidates(markdownPath: string): Promise<SessionCan
     if (!meta.threadId) {
       continue;
     }
-    candidates.push(meta);
+    candidates.push({
+      ...meta,
+      evidence: createDiscoveryEvidence(raw, normalizedPath, escapedPath)
+    });
   }
 
-  const byThreadId = new Map<string, SessionCandidate>();
+  const byThreadId = new Map<
+    string,
+    CodexSessionCandidate & { evidence: AgentDiscoveryCandidate["evidence"] }
+  >();
   for (const candidate of candidates) {
     const existing = byThreadId.get(candidate.threadId);
     if (!existing || existing.updatedAt < candidate.updatedAt) {
@@ -105,7 +96,7 @@ async function listRecentSessionFiles(): Promise<string[]> {
     .map((item) => item.path);
 }
 
-function readSessionMeta(raw: string, filePath: string): SessionCandidate {
+function readSessionMeta(raw: string, filePath: string): CodexSessionCandidate {
   const firstLine = raw.split("\n", 1)[0];
   let threadId = extractThreadIdFromFilename(filePath);
   let cwd: string | undefined;
@@ -124,7 +115,6 @@ function readSessionMeta(raw: string, filePath: string): SessionCandidate {
     if (parsed.type === "session_meta") {
       threadId = parsed.payload?.id ?? threadId;
       cwd = parsed.payload?.cwd;
-      updatedAt = parsed.payload?.timestamp ?? parsed.timestamp ?? updatedAt;
     }
   } catch {
     // The filename thread id is enough for the high-confidence exact-path match.

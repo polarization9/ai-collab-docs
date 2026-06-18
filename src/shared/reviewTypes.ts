@@ -1,5 +1,10 @@
 import type { Heading } from "./types.js";
-import type { AgentProvider, AgentSessionRole } from "./agentTypes.js";
+import type {
+  AgentConfiguredBy,
+  AgentConfiguredVia,
+  AgentProvider,
+  AgentSessionRole
+} from "./agentTypes.js";
 import type { CodexTargetType } from "./codexTypes.js";
 
 export type AnnotationStatus = "open" | "resolved";
@@ -137,6 +142,7 @@ export type ReviewEventDeliveryAdapter =
   | "future-thread-api"
   | "codex-app-server"
   | "claude-code-cli"
+  | "workbuddy-codebuddy-cli"
   | "custom-cli";
 
 export type ReviewEventAgentReference = {
@@ -145,6 +151,9 @@ export type ReviewEventAgentReference = {
   sessionId?: string;
   cwd?: string;
   displayName?: string;
+  configuredAt?: string;
+  configuredBy?: AgentConfiguredBy;
+  configuredVia?: AgentConfiguredVia;
 };
 
 export type ReviewEvent = {

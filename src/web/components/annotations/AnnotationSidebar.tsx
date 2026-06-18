@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import type { AgentLinkResponse } from "../../../shared/agentTypes";
+import type { AgentLinkResponse, AgentProvider } from "../../../shared/agentTypes";
 import type {
   AddReplyRequest,
   AnnotationStatus,
@@ -39,6 +39,7 @@ type AnnotationSidebarProps = {
   isLoading: boolean;
   error?: string;
   onSelect: (annotationId: string) => void;
+  onToggleSelect: (annotationId: string) => void;
   onReply: (annotationId: string, request: AddReplyRequest) => Promise<void>;
   onEditAnnotation: (
     annotationId: string,
@@ -50,7 +51,7 @@ type AnnotationSidebarProps = {
     replyId: string,
     request: UpdateReplyRequest
   ) => Promise<void>;
-  onStatusChange: (annotationId: string, status: AnnotationStatus) => Promise<void>;
+  onStatusChange: (annotationId: string, status: AnnotationStatus, eventId?: string) => Promise<void>;
   onCreateDocumentAnnotation: (body: string) => Promise<void>;
   onToggleAutoMonitor: (enabled: boolean) => Promise<void>;
   onCopySuccessorInstruction: () => Promise<void>;
@@ -68,6 +69,7 @@ export function AnnotationSidebar({
   isLoading,
   error,
   onSelect,
+  onToggleSelect,
   onReply,
   onEditAnnotation,
   onDeleteAnnotation,
@@ -201,6 +203,7 @@ export function AnnotationSidebar({
             event={getLatestAnnotationEvent(events, annotation.id)}
             isSelected={annotation.id === selectedAnnotationId}
             onSelect={onSelect}
+            onToggleSelect={onToggleSelect}
             onReply={onReply}
             onEditAnnotation={onEditAnnotation}
             onDeleteAnnotation={onDeleteAnnotation}
@@ -230,6 +233,10 @@ function AnnotationAgentStatus({
   const [isBusy, setIsBusy] = useState(false);
   const connection = agentLink?.connection;
   const autoEnabled = Boolean(connection?.autoSendNewAnnotations);
+  const canUseAutoMonitor =
+    connection?.provider === "codex" ||
+    connection?.provider === "claude-code" ||
+    connection?.provider === "workbuddy";
   const view = getAgentRouteView(agentLink, t, error);
   const copyInstructionLabel = connection?.hasTarget ? t("agent.copySuccessor") : t("agent.copyConnect");
 
@@ -259,7 +266,7 @@ function AnnotationAgentStatus({
       </div>
 
       <div className="annotation-codex-route-actions">
-        {connection?.hasTarget ? (
+        {connection?.hasTarget && canUseAutoMonitor ? (
           <button
             type="button"
             className={`annotation-codex-monitor${autoEnabled ? " annotation-codex-monitor-on" : ""}`}
@@ -341,10 +348,13 @@ function getAgentProviderName(provider: AgentLinkResponse["connection"]["provide
   if (provider === "claude-code") {
     return "Claude Code";
   }
+  if (provider === "workbuddy") {
+    return "WorkBuddy";
+  }
   if (provider === "custom-cli") {
     return "Custom CLI";
   }
-  return "Codex";
+  return provider === "codex" ? "Codex" : "Agent";
 }
 
 type AnnotationCardProps = {
@@ -352,6 +362,7 @@ type AnnotationCardProps = {
   event: ReviewEvent | null;
   isSelected: boolean;
   onSelect: (annotationId: string) => void;
+  onToggleSelect: (annotationId: string) => void;
   onReply: (annotationId: string, request: AddReplyRequest) => Promise<void>;
   onEditAnnotation: (
     annotationId: string,
@@ -363,7 +374,7 @@ type AnnotationCardProps = {
     replyId: string,
     request: UpdateReplyRequest
   ) => Promise<void>;
-  onStatusChange: (annotationId: string, status: AnnotationStatus) => Promise<void>;
+  onStatusChange: (annotationId: string, status: AnnotationStatus, eventId?: string) => Promise<void>;
   onSendToAgent: (annotationId: string) => Promise<void>;
   onRetryReviewEvent: (eventId: string) => Promise<void>;
 };
@@ -389,24 +400,26 @@ function getAnnotationEventBadge(
   event: ReviewEvent | null,
   t: (key: LocaleKey, params?: Record<string, string | number>) => string
 ): AnnotationEventBadge | null {
+  const providerName = getEventProviderName(event);
+  const params = { provider: providerName };
   switch (event?.deliveryStatus) {
     case "queued":
       return {
         label: t("event.queued"),
-        title: t("event.queuedTitle"),
+        title: t("event.queuedTitle", params),
         tone: "queued"
       };
     case "delivering":
       return {
         label: t("event.delivering"),
-        title: t("event.deliveringTitle"),
+        title: t("event.deliveringTitle", params),
         tone: "delivering"
       };
     case "sent":
     case "processing":
       return {
-        label: t("event.processing"),
-        title: t("event.processingTitle"),
+        label: t("event.processing", params),
+        title: t("event.processingTitle", params),
         tone: "processing"
       };
     case "handled":
@@ -427,6 +440,18 @@ function getAnnotationEventBadge(
   }
 }
 
+function getEventProviderName(event: ReviewEvent | null): string {
+  return getAgentProviderName(getEventProvider(event));
+}
+
+function getEventProvider(event: ReviewEvent | null): AgentProvider | null {
+  return (
+    event?.delivery?.provider ??
+    event?.targetAgent?.provider ??
+    (event?.targetThreadId ? "codex" : null)
+  );
+}
+
 type ReplyTargetDraft = {
   replyId: string;
   authorName: string;
@@ -437,6 +462,7 @@ function AnnotationCard({
   event,
   isSelected,
   onSelect,
+  onToggleSelect,
   onReply,
   onEditAnnotation,
   onDeleteAnnotation,
@@ -690,7 +716,7 @@ function AnnotationCard({
         <button
           type="button"
           className="annotation-card-main"
-          onClick={() => onSelect(annotation.id)}
+          onClick={() => onToggleSelect(annotation.id)}
         >
           <span className="annotation-card-status-row">
             <span className={`annotation-status annotation-status-${annotation.status}`}>
@@ -731,9 +757,14 @@ function AnnotationCard({
           className="annotation-card-icon-action"
           aria-label={annotation.status === "open" ? t("annotation.markResolved") : t("annotation.reopen")}
           title={annotation.status === "open" ? t("annotation.markResolved") : t("annotation.reopen")}
-          onClick={() =>
-            onStatusChange(annotation.id, annotation.status === "open" ? "resolved" : "open")
-          }
+          onClick={() => {
+            const nextStatus = annotation.status === "open" ? "resolved" : "open";
+            onStatusChange(
+              annotation.id,
+              nextStatus,
+              nextStatus === "resolved" ? event?.id : undefined
+            );
+          }}
         >
           {annotation.status === "open" ? <CheckCircle2 size={15} /> : <ReopenIcon />}
         </button>

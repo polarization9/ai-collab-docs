@@ -19,7 +19,7 @@ import {
   loadAgentDocumentLink,
   updateAgentDocumentLink
 } from "./agentLink.js";
-import { discoverCodexSourceForDocument } from "./codexDiscovery.js";
+import { discoverAgentSourceForDocument } from "./agentDiscovery.js";
 import {
   listRecentDocuments,
   loadAppSettings,
@@ -174,7 +174,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
       const document = await loadReviewDocument(nextMarkdownPath);
       documentContentCache.set(nextMarkdownPath, document.content);
       await rememberRecentDocument(nextMarkdownPath);
-      await discoverCodexSourceIfEnabled(nextMarkdownPath);
+      await discoverAgentSourceIfEnabled(nextMarkdownPath);
       dispatchReviewEventsInBackground(nextMarkdownPath);
       response.json(document);
     } catch (error) {
@@ -190,7 +190,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
       const document = await loadReviewDocument(nextMarkdownPath);
       documentContentCache.set(nextMarkdownPath, document.content);
       await rememberRecentDocument(nextMarkdownPath);
-      await discoverCodexSourceIfEnabled(nextMarkdownPath);
+      await discoverAgentSourceIfEnabled(nextMarkdownPath);
       dispatchReviewEventsInBackground(nextMarkdownPath);
       response.json(document);
     } catch (error) {
@@ -706,12 +706,12 @@ async function loadDocumentAndRepairExternalChanges(
   return document;
 }
 
-async function discoverCodexSourceIfEnabled(markdownPath: string): Promise<void> {
+async function discoverAgentSourceIfEnabled(markdownPath: string): Promise<void> {
   const settings = await loadAppSettings();
   if (!settings.codexSourceDiscoveryEnabled) {
     return;
   }
-  await discoverCodexSourceForDocument(markdownPath);
+  await discoverAgentSourceForDocument(markdownPath);
 }
 
 function openMarkdownPathFromRequest(body: OpenDocumentRequest): string {
@@ -852,7 +852,12 @@ function parseAgentProvider(provider: string | undefined): AgentProvider {
   if (!provider) {
     return "codex";
   }
-  if (provider === "codex" || provider === "claude-code" || provider === "custom-cli") {
+  if (
+    provider === "codex" ||
+    provider === "claude-code" ||
+    provider === "workbuddy" ||
+    provider === "custom-cli"
+  ) {
     return provider;
   }
   throw new Error(`Unsupported Agent provider: ${provider}`);
