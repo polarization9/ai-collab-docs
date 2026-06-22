@@ -1753,6 +1753,7 @@ async function resolveMcpCliPath(): Promise<string | null> {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
     normalizeOptionalString(process.env.MARGENT_MCP_CLI_PATH),
+    path.resolve(moduleDir, "mcpCli.js"),
     path.resolve(moduleDir, "../mcpCli.js"),
     path.resolve(process.cwd(), "dist/mcpCli.js")
   ];
