@@ -106,8 +106,12 @@ export function useReview(
     [documentPath]
   );
 
-  const setStatus = useCallback(async (annotationId: string, status: AnnotationStatus) => {
-    const review = await updateAnnotationStatus(annotationId, { status }, documentPath);
+  const setStatus = useCallback(async (
+    annotationId: string,
+    status: AnnotationStatus,
+    eventId?: string
+  ) => {
+    const review = await updateAnnotationStatus(annotationId, { status, eventId }, documentPath);
     setState({ status: "ready", review });
     setSelectedAnnotationId(annotationId);
   }, [documentPath]);

@@ -25,7 +25,7 @@ const QUICKSTART_TEMPLATES: Record<
     documentName: "Margent Quickstart.md",
     content: `# Margent Quickstart
 
-欢迎使用 Margent。这是一份内置示例文档，适合用来快速体验阅读、批注、轻编辑和 Codex 协作。
+欢迎使用 Margent。这是一份内置示例文档，适合用来快速体验阅读、批注、轻编辑和 Agent 协作。
 
 ## 1. 阅读
 
@@ -45,8 +45,8 @@ Margent 支持 Mermaid 图表渲染。下面这个流程图展示了一个典型
 flowchart LR
   A[打开 Markdown] --> B[阅读与批注]
   B --> C[轻量编辑]
-  B --> D[发送给 Codex]
-  D --> E[Codex 通过 MCP 处理]
+  B --> D[发送给 Agent]
+  D --> E[Agent 通过 MCP 处理]
   E --> B
 \`\`\`
 
@@ -58,7 +58,7 @@ flowchart LR
 | --- | --- | --- |
 | 阅读文档 | 渲染 Markdown、Mermaid、代码块和表格 | \`.md\` |
 | 添加批注 | 保存批注、回复和状态 | \`.review.json\` |
-| 连接 Codex | 保存来源会话和接续会话信息 | \`.codex.json\` |
+| 连接 Agent | 保存来源会话和接续会话信息 | \`.margent-agent.json\` |
 
 ## 5. 轻编辑
 
@@ -66,18 +66,18 @@ flowchart LR
 
 你可以把这一段改成自己的测试内容，然后按 \`Ctrl+S\` 保存。
 
-## 6. Codex 协作
+## 6. Agent 协作
 
-如果这份文档来自 Codex，Margent 可以记录来源会话。你也可以把批注发送给 Codex，让 Codex 读取批注、回复批注，或按需要修改正文。
+如果这份文档来自 Codex 或其他 Agent，Margent 可以记录来源会话。你也可以把批注发送给当前 Agent，让 Agent 读取批注、回复批注，或按需要修改正文。
 
-第一次体验时，不需要先配置 Codex。打开文档、添加批注、切换编辑态这些核心功能都可以直接使用。
+第一次体验时，不需要先配置 Agent。打开文档、添加批注、切换编辑态这些核心功能都可以直接使用。
 `
   },
   "en-US": {
     documentName: "Margent Quickstart.en.md",
     content: `# Margent Quickstart
 
-Welcome to Margent. This built-in example document helps you try the main reading, annotation, light editing, and Codex collaboration workflows.
+Welcome to Margent. This built-in example document helps you try the main reading, annotation, light editing, and Agent collaboration workflows.
 
 ## 1. Reading
 
@@ -99,8 +99,8 @@ Margent supports Mermaid diagrams. This flowchart shows a typical local review l
 flowchart LR
   A[Open Markdown] --> B[Read and annotate]
   B --> C[Light edit]
-  B --> D[Send to Codex]
-  D --> E[Codex handles the annotation through MCP]
+  B --> D[Send to Agent]
+  D --> E[Agent handles the annotation through MCP]
   E --> B
 \`\`\`
 
@@ -112,7 +112,7 @@ Wide tables can scroll horizontally. You can also drag column edges to adjust co
 | --- | --- | --- |
 | Read a document | Renders Markdown, Mermaid, code blocks, and tables | \`.md\` |
 | Add annotations | Saves comments, replies, and status | \`.review.json\` |
-| Connect Codex | Saves source and successor session information | \`.codex.json\` |
+| Connect Agent | Saves source and successor session information | \`.margent-agent.json\` |
 
 ## 5. Light Editing
 
@@ -120,11 +120,11 @@ Use the edit button in the upper-right document controls to make lightweight Mar
 
 You can edit this paragraph as a quick test, then press \`Ctrl+S\` to save.
 
-## 6. Codex Collaboration
+## 6. Agent Collaboration
 
-If this document came from Codex, Margent can remember the source Codex session. You can also send annotations to Codex so Codex can read the annotation, reply to it, or update the Markdown when the requested change is clear.
+If this document came from Codex or another Agent, Margent can remember the source session. You can also send annotations to the current Agent so it can read the annotation, reply to it, or update the Markdown when the requested change is clear.
 
-You do not need to configure Codex for your first try. Opening this document, adding annotations, switching to edit mode, and saving changes all work locally.
+You do not need to configure an Agent for your first try. Opening this document, adding annotations, switching to edit mode, and saving changes all work locally.
 `
   }
 };

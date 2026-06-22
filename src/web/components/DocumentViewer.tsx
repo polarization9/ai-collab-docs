@@ -5,6 +5,7 @@ import {
   memo,
   Suspense,
   useEffect,
+  useMemo,
   useState,
   type MouseEvent,
   type ReactNode
@@ -12,6 +13,11 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import {
+  parseMarkdownBlocks,
+  type MarkdownBlock,
+  type MarkdownBlockKind
+} from "../../shared/markdownBlocks";
 import type { Heading, HeadingLevel, ReviewDocument } from "../../shared/types";
 import { fetchDocumentAssetObjectUrl } from "../api";
 import { CodeBlock } from "./CodeBlock";
@@ -28,19 +34,24 @@ type DocumentViewerProps = {
 };
 
 export const DocumentViewer = memo(function DocumentViewer({ document }: DocumentViewerProps) {
+  const canonicalBlocks = useMemo(
+    () => parseMarkdownBlocks(document.content).blocks,
+    [document.content]
+  );
   let headingIndex = 0;
   let mermaidIndex = 0;
   let blockIndex = 0;
   let currentHeading: Heading | null = null;
 
-  const getBlockProps = (kind: string, heading = currentHeading) => {
-    const index = blockIndex++;
+  const getBlockProps = (kind: MarkdownBlockKind, heading = currentHeading) => {
+    const block = takeCanonicalBlock(canonicalBlocks, blockIndex, kind, heading);
+    blockIndex = block ? block.index + 1 : blockIndex + 1;
     return {
-      "data-review-block-id": `block-${index}`,
-      "data-review-block-index": String(index),
-      "data-review-block-kind": kind,
-      "data-review-heading-id": heading?.id ?? "",
-      "data-review-heading-text": heading?.text ?? ""
+      "data-review-block-id": block?.id ?? `block-${blockIndex - 1}`,
+      "data-review-block-index": String(block?.index ?? blockIndex - 1),
+      "data-review-block-kind": block?.kind ?? kind,
+      "data-review-heading-id": block?.headingId ?? heading?.id ?? "",
+      "data-review-heading-text": block?.headingText ?? heading?.text ?? ""
     };
   };
 
@@ -77,6 +88,9 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
     },
     blockquote({ children }) {
       return <blockquote {...getBlockProps("blockquote")}>{children}</blockquote>;
+    },
+    hr() {
+      return <hr {...getBlockProps("thematic-break")} />;
     },
     code({ className, children, ...props }) {
       return (
@@ -181,6 +195,26 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
     </article>
   );
 });
+
+function takeCanonicalBlock(
+  blocks: MarkdownBlock[],
+  cursor: number,
+  kind: MarkdownBlockKind,
+  heading: Heading | null
+): MarkdownBlock | null {
+  const current = blocks[cursor];
+  if (!current || current.kind === kind) {
+    return current ?? null;
+  }
+
+  const nextIndex = blocks.findIndex(
+    (block, index) =>
+      index > cursor &&
+      block.kind === kind &&
+      (!heading || block.headingId === heading.id || block.headingText === heading.text)
+  );
+  return nextIndex >= 0 ? blocks[nextIndex] : current;
+}
 
 function DocumentImage({
   alt,

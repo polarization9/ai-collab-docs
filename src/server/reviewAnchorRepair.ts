@@ -22,6 +22,7 @@ type RepairContext = {
   next: ParsedMarkdownBlocks;
   nextMarkdown: string;
   blockMappings: BlockMapping[];
+  changedBlockIds: Set<string>;
 };
 
 type BlockMapping = {
@@ -54,11 +55,19 @@ type SearchIndex = {
   map: number[];
 };
 
+type RepairAttempt = {
+  accepted: AnchorCandidate | null;
+  candidates: AnchorCandidate[];
+};
+
 const CONTEXT_CHARS = 40;
-const ACCEPT_SCORE = 70;
-const UNIQUE_ACCEPT_SCORE = 58;
-const MIN_LEAD_SCORE = 12;
 const SIMILAR_BLOCK_THRESHOLD = 0.72;
+const PREFERRED_MULTI_ACCEPT_SCORE = 92;
+const PREFERRED_MULTI_MIN_LEAD = 14;
+const TEXT_MULTI_ACCEPT_SCORE = 86;
+const TEXT_MULTI_MIN_LEAD = 16;
+const CONTEXT_ACCEPT_SCORE = 78;
+const CONTEXT_MIN_LEAD = 18;
 
 export function repairReviewAnchors(
   review: ReviewFile,
@@ -68,11 +77,13 @@ export function repairReviewAnchors(
 ): { review: ReviewFile; summary: AnchorRepairSummary } {
   const previous = previousMarkdown ? parseMarkdownBlocks(previousMarkdown) : null;
   const next = parseMarkdownBlocks(nextMarkdown);
+  const blockMappings = previous ? createBlockMappings(previous.blocks, next.blocks) : [];
   const context: RepairContext = {
     previous,
     next,
     nextMarkdown,
-    blockMappings: previous ? createBlockMappings(previous.blocks, next.blocks) : []
+    blockMappings,
+    changedBlockIds: createChangedBlockIds(next.blocks, blockMappings)
   };
   const summary = createEmptySummary(review.annotations.length);
   let changed = false;
@@ -107,16 +118,23 @@ function repairAnnotationAnchor(
     return "exact";
   }
 
-  const candidates = scoreCandidates(
-    findAnchorCandidates(anchor, context, getCandidateTexts(anchor, preferredText)),
-    anchor,
-    context
-  );
-  const accepted = selectAcceptedCandidate(candidates);
+  const preferred = preferredText?.trim();
+  let attempt: RepairAttempt;
 
-  if (accepted) {
-    updateAnchorFromCandidate(anchor, context, accepted);
-    return accepted.matchKind === "exact" && accepted.source !== "original" ? "exact" : "fuzzy";
+  if (preferred) {
+    attempt = repairWithPreferred(anchor, context, preferred);
+    if (!attempt.accepted && attempt.candidates.length === 0) {
+      attempt = repairWithoutPreferred(anchor, context);
+    }
+  } else {
+    attempt = repairWithoutPreferred(anchor, context);
+  }
+
+  if (attempt.accepted) {
+    updateAnchorFromCandidate(anchor, context, attempt.accepted);
+    return attempt.accepted.matchKind === "exact" && attempt.accepted.source !== "original"
+      ? "exact"
+      : "fuzzy";
   }
 
   const heading = findFallbackHeading(anchor, context.next);
@@ -125,7 +143,7 @@ function repairAnnotationAnchor(
     setRepairMeta(anchor, {
       precision: "heading",
       confidence: 0,
-      reason: candidates.length > 0 ? "ambiguous-text-candidates" : "heading-fallback"
+      reason: attempt.candidates.length > 0 ? "ambiguous-text-candidates" : "heading-fallback"
     });
     return "headingFallback";
   }
@@ -138,48 +156,89 @@ function repairAnnotationAnchor(
   return "unresolved";
 }
 
-function getCandidateTexts(anchor: ReviewAnchor, preferredText?: string): CandidateText[] {
-  const texts: CandidateText[] = [];
-  if (preferredText?.trim()) {
-    texts.push({ text: preferredText.trim(), source: "preferred" });
-  }
-  if (anchor.selectedText?.trim()) {
-    texts.push({ text: anchor.selectedText.trim(), source: "selected" });
-  }
-  if (anchor.originalSelectedText?.trim() && anchor.originalSelectedText !== anchor.selectedText) {
-    texts.push({ text: anchor.originalSelectedText.trim(), source: "original" });
-  }
-
-  const seen = new Set<string>();
-  return texts.filter((item) => {
-    const key = `${item.source}:${normalizeSearchText(item.text)}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-function findAnchorCandidates(
+function repairWithPreferred(
   anchor: ReviewAnchor,
   context: RepairContext,
-  texts: CandidateText[]
-): AnchorCandidate[] {
-  const candidates: AnchorCandidate[] = [];
-  const scopedBlocks = getHeadingScopedBlocks(context.next.blocks, anchor);
-  const allBlocks = context.next.blocks;
+  preferredText: string
+): RepairAttempt {
+  const candidates = scoreCandidates(
+    dedupeCandidates(
+      findTextCandidates(context.next.blocks, {
+        text: preferredText,
+        source: "preferred"
+      })
+    ),
+    anchor,
+    context,
+    "preferred"
+  );
 
-  for (const text of texts) {
-    candidates.push(...findTextCandidates(scopedBlocks, text));
-    candidates.push(...findTextCandidates(allBlocks, text, candidates));
+  return {
+    accepted: selectPreferredCandidate(candidates),
+    candidates
+  };
+}
+
+function repairWithoutPreferred(anchor: ReviewAnchor, context: RepairContext): RepairAttempt {
+  const current = findCurrentAnchorCandidate(anchor, context);
+  if (current) {
+    return { accepted: current, candidates: [current] };
   }
 
-  if (candidates.length === 0 && (anchor.kind === "text" || anchor.kind === "range")) {
-    candidates.push(...findContextCandidates(context.next.blocks, anchor));
+  const selectedAttempt = repairWithTextSource(anchor, context, {
+    text: anchor.selectedText,
+    source: "selected"
+  });
+  if (selectedAttempt.accepted || selectedAttempt.candidates.length > 0) {
+    return selectedAttempt;
   }
 
-  return dedupeCandidates(candidates);
+  if (anchor.originalSelectedText?.trim() && anchor.originalSelectedText !== anchor.selectedText) {
+    const originalAttempt = repairWithTextSource(anchor, context, {
+      text: anchor.originalSelectedText,
+      source: "original"
+    });
+    if (originalAttempt.accepted || originalAttempt.candidates.length > 0) {
+      return originalAttempt;
+    }
+  }
+
+  if (anchor.kind !== "text" && anchor.kind !== "range") {
+    return { accepted: null, candidates: [] };
+  }
+
+  const contextCandidates = scoreCandidates(
+    dedupeCandidates(findContextCandidates(context.next.blocks, anchor)),
+    anchor,
+    context,
+    "conservative"
+  );
+  return {
+    accepted: selectContextCandidate(contextCandidates),
+    candidates: contextCandidates
+  };
+}
+
+function repairWithTextSource(
+  anchor: ReviewAnchor,
+  context: RepairContext,
+  text: CandidateText
+): RepairAttempt {
+  if (!text.text?.trim()) {
+    return { accepted: null, candidates: [] };
+  }
+
+  const candidates = scoreCandidates(
+    dedupeCandidates(findTextCandidates(context.next.blocks, text)),
+    anchor,
+    context,
+    "conservative"
+  );
+
+  return {
+    accepted: selectConservativeTextCandidate(candidates),
+    candidates
+  };
 }
 
 function findTextCandidates(
@@ -259,10 +318,69 @@ function findContextCandidates(
   return candidates;
 }
 
+function findCurrentAnchorCandidate(
+  anchor: ReviewAnchor,
+  context: RepairContext
+): AnchorCandidate | null {
+  if (!("blockId" in anchor) || !anchor.selectedText?.trim()) {
+    return null;
+  }
+
+  const block =
+    context.next.blocks.find((item) => item.id === anchor.blockId) ??
+    context.next.blocks.find((item) => item.index === anchor.blockIndex);
+  if (!block) {
+    return null;
+  }
+
+  const candidates = findTextCandidates([block], {
+    text: anchor.selectedText,
+    source: "selected"
+  });
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const anchorOffset = getAnchorStartOffset(anchor);
+  if (anchorOffset === undefined) {
+    if (candidates.length !== 1) {
+      return null;
+    }
+    return markCurrentAnchorCandidate(candidates[0], "current-block-text");
+  }
+
+  const ranked = candidates
+    .map((candidate) => ({
+      candidate,
+      distance: Math.abs(candidate.startOffset - anchorOffset)
+    }))
+    .sort((left, right) => left.distance - right.distance);
+  const best = ranked[0];
+  const second = ranked[1];
+  if (!best) {
+    return null;
+  }
+
+  if (!second || best.distance <= 4 || best.distance + 8 < second.distance) {
+    return markCurrentAnchorCandidate(best.candidate, `current-anchor-distance:${best.distance}`);
+  }
+
+  return null;
+}
+
+function markCurrentAnchorCandidate(candidate: AnchorCandidate, reason: string): AnchorCandidate {
+  return {
+    ...candidate,
+    score: 120,
+    reasons: [reason]
+  };
+}
+
 function scoreCandidates(
   candidates: AnchorCandidate[],
   anchor: ReviewAnchor,
-  context: RepairContext
+  context: RepairContext,
+  mode: "preferred" | "conservative"
 ): AnchorCandidate[] {
   const mapping = context.blockMappings.find((item) => item.oldBlockId === getAnchorBlockId(anchor));
   return candidates
@@ -270,16 +388,23 @@ function scoreCandidates(
       let score = 0;
       const reasons: string[] = [];
 
-      const baseScore = getBaseScore(candidate);
+      const baseScore = getBaseScore(candidate, mode);
       score += baseScore;
       reasons.push(`${candidate.source}-${candidate.matchKind}:${baseScore}`);
 
+      if (mode === "preferred" && context.changedBlockIds.has(candidate.block.id)) {
+        score += 35;
+        reasons.push("changed-block:35");
+      }
+
       if (anchor.headingId && candidate.block.headingId === anchor.headingId) {
-        score += 18;
-        reasons.push("heading-id:18");
+        const value = mode === "preferred" ? 18 : 24;
+        score += value;
+        reasons.push(`heading-id:${value}`);
       } else if (anchor.headingText && candidate.block.headingText === anchor.headingText) {
-        score += 14;
-        reasons.push("heading-text:14");
+        const value = mode === "preferred" ? 14 : 18;
+        score += value;
+        reasons.push(`heading-text:${value}`);
       }
 
       const prefixScore = scoreContext(candidate, context.nextMarkdown, getAnchorPrefix(anchor), "prefix");
@@ -288,8 +413,9 @@ function scoreCandidates(
       reasons.push(...prefixScore.reasons, ...suffixScore.reasons);
 
       if (anchor.blockFingerprint?.kind && anchor.blockFingerprint.kind === candidate.block.kind) {
-        score += 8;
-        reasons.push("block-kind:8");
+        const value = mode === "preferred" ? 6 : 10;
+        score += value;
+        reasons.push(`block-kind:${value}`);
       }
 
       const anchorBlockIndex = getAnchorBlockIndex(anchor);
@@ -312,8 +438,9 @@ function scoreCandidates(
       }
 
       if (mapping?.newBlockId === candidate.block.id) {
-        score += 10;
-        reasons.push(`block-mapping:${mapping.reason}`);
+        const value = mode === "preferred" ? 16 : 22;
+        score += value;
+        reasons.push(`block-mapping-${mapping.reason}:${value}`);
       }
 
       return { ...candidate, score, reasons };
@@ -321,17 +448,54 @@ function scoreCandidates(
     .sort((left, right) => right.score - left.score);
 }
 
-function selectAcceptedCandidate(candidates: AnchorCandidate[]): AnchorCandidate | null {
+function selectPreferredCandidate(candidates: AnchorCandidate[]): AnchorCandidate | null {
   const [best, second] = candidates;
   if (!best) {
     return null;
   }
 
-  if (!second && best.score >= UNIQUE_ACCEPT_SCORE) {
+  if (!second) {
     return best;
   }
 
-  if (best.score >= ACCEPT_SCORE && (!second || best.score - second.score >= MIN_LEAD_SCORE)) {
+  if (
+    best.score >= PREFERRED_MULTI_ACCEPT_SCORE &&
+    best.score - second.score >= PREFERRED_MULTI_MIN_LEAD
+  ) {
+    return best;
+  }
+
+  return null;
+}
+
+function selectConservativeTextCandidate(candidates: AnchorCandidate[]): AnchorCandidate | null {
+  const [best, second] = candidates;
+  if (!best) {
+    return null;
+  }
+
+  if (!second) {
+    return best;
+  }
+
+  if (best.score >= TEXT_MULTI_ACCEPT_SCORE && best.score - second.score >= TEXT_MULTI_MIN_LEAD) {
+    return best;
+  }
+
+  return null;
+}
+
+function selectContextCandidate(candidates: AnchorCandidate[]): AnchorCandidate | null {
+  const [best, second] = candidates;
+  if (!best || !hasStrongContextEvidence(best)) {
+    return null;
+  }
+
+  if (!second) {
+    return best.score >= CONTEXT_ACCEPT_SCORE ? best : null;
+  }
+
+  if (best.score >= CONTEXT_ACCEPT_SCORE && best.score - second.score >= CONTEXT_MIN_LEAD) {
     return best;
   }
 
@@ -427,12 +591,24 @@ function createBlockMappings(oldBlocks: MarkdownBlock[], newBlocks: MarkdownBloc
   const usedNewBlocks = new Set<string>();
 
   for (const oldBlock of oldBlocks) {
-    const sameText = newBlocks.find(
-      (newBlock) =>
-        !usedNewBlocks.has(newBlock.id) &&
-        oldBlock.normalizedText &&
-        newBlock.normalizedText === oldBlock.normalizedText
-    );
+    const sameText = findBestSameTextBlock(oldBlock, newBlocks, usedNewBlocks, true);
+    if (sameText) {
+      mappings.push({
+        oldBlockId: oldBlock.id,
+        newBlockId: sameText.id,
+        confidence: 1,
+        reason: "same-text"
+      });
+      usedNewBlocks.add(sameText.id);
+    }
+  }
+
+  for (const oldBlock of oldBlocks) {
+    if (mappings.some((item) => item.oldBlockId === oldBlock.id)) {
+      continue;
+    }
+
+    const sameText = findBestSameTextBlock(oldBlock, newBlocks, usedNewBlocks, false);
     if (sameText) {
       mappings.push({
         oldBlockId: oldBlock.id,
@@ -477,6 +653,49 @@ function createBlockMappings(oldBlocks: MarkdownBlock[], newBlocks: MarkdownBloc
   }
 
   return mappings;
+}
+
+function findBestSameTextBlock(
+  oldBlock: MarkdownBlock,
+  newBlocks: MarkdownBlock[],
+  usedNewBlocks: Set<string>,
+  requireSameHeading: boolean
+): MarkdownBlock | null {
+  if (!oldBlock.normalizedText) {
+    return null;
+  }
+
+  const candidates = newBlocks
+    .filter(
+      (newBlock) =>
+        !usedNewBlocks.has(newBlock.id) &&
+        newBlock.kind === oldBlock.kind &&
+        newBlock.normalizedText === oldBlock.normalizedText &&
+        (!requireSameHeading ||
+          newBlock.headingId === oldBlock.headingId ||
+          newBlock.headingText === oldBlock.headingText)
+    )
+    .sort((left, right) => {
+      const leftDistance = Math.abs(left.index - oldBlock.index);
+      const rightDistance = Math.abs(right.index - oldBlock.index);
+      return leftDistance - rightDistance;
+    });
+
+  return candidates[0] ?? null;
+}
+
+function createChangedBlockIds(blocks: MarkdownBlock[], mappings: BlockMapping[]): Set<string> {
+  const unchangedBlockIds = new Set(
+    mappings
+      .filter((mapping) => mapping.reason === "same-text")
+      .map((mapping) => mapping.newBlockId)
+  );
+
+  return new Set(
+    blocks
+      .filter((block) => !unchangedBlockIds.has(block.id))
+      .map((block) => block.id)
+  );
 }
 
 function findMatches(text: string, query: string): Array<{ start: number; end: number; kind: "exact" | "normalized" }> {
@@ -597,14 +816,18 @@ function scoreContext(
   return { value: 0, reasons: [] };
 }
 
-function getBaseScore(candidate: AnchorCandidate): number {
-  if (candidate.source === "preferred") {
-    return candidate.matchKind === "exact" ? 58 : candidate.matchKind === "normalized" ? 48 : 36;
+function getBaseScore(candidate: AnchorCandidate, mode: "preferred" | "conservative"): number {
+  if (mode === "preferred") {
+    return candidate.matchKind === "exact" ? 80 : candidate.matchKind === "normalized" ? 68 : 0;
   }
   if (candidate.source === "selected") {
-    return candidate.matchKind === "exact" ? 45 : candidate.matchKind === "normalized" ? 36 : 24;
+    return candidate.matchKind === "exact" ? 60 : candidate.matchKind === "normalized" ? 50 : 28;
   }
-  return candidate.matchKind === "exact" ? 34 : candidate.matchKind === "normalized" ? 28 : 18;
+  return candidate.matchKind === "exact" ? 44 : candidate.matchKind === "normalized" ? 36 : 0;
+}
+
+function hasStrongContextEvidence(candidate: AnchorCandidate): boolean {
+  return candidate.reasons.includes("prefix:16") || candidate.reasons.includes("suffix:16");
 }
 
 function getHeadingScopedBlocks(blocks: MarkdownBlock[], anchor: ReviewAnchor): MarkdownBlock[] {
@@ -647,6 +870,16 @@ function getAnchorBlockId(anchor: ReviewAnchor): string | undefined {
 
 function getAnchorBlockIndex(anchor: ReviewAnchor): number | undefined {
   return "blockIndex" in anchor ? anchor.blockIndex : undefined;
+}
+
+function getAnchorStartOffset(anchor: ReviewAnchor): number | undefined {
+  if (anchor.kind === "text") {
+    return anchor.startOffset;
+  }
+  if (anchor.kind === "range") {
+    return anchor.startOffset;
+  }
+  return undefined;
 }
 
 function getAnchorPrefix(anchor: ReviewAnchor): string | undefined {

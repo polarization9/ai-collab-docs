@@ -1,3 +1,4 @@
+import { stripMarkdownSyntax } from "../../shared/markdownBlocks";
 import type { ReviewAnchor, ReviewAnnotation } from "../../shared/reviewTypes";
 
 export type ResolvedAnnotation = {
@@ -52,10 +53,6 @@ export function getAnnotationRects(
   annotation: ReviewAnnotation,
   container: HTMLElement
 ): Array<DOMRect> {
-  if (annotation.anchor.kind === "range") {
-    return getRangeAnchorTextRects(annotation.anchor, container);
-  }
-
   const resolved = resolveAnnotation(annotation, container);
   if (!resolved) {
     return [];
@@ -100,6 +97,10 @@ function resolveRangeAnchor(
     return null;
   }
 
+  if (!isAnchorBlockKindMatch(anchor, startBlock)) {
+    return null;
+  }
+
   const startBoundary = getTextBoundary(startBlock, anchor.startOffset);
   const endBoundary = getTextBoundary(endBlock, anchor.endOffset);
   if (!startBoundary || !endBoundary) {
@@ -120,70 +121,19 @@ function resolveRangeAnchor(
   };
 }
 
-function getRangeAnchorTextRects(
-  anchor: Extract<ReviewAnchor, { kind: "range" }>,
-  container: HTMLElement
-): DOMRect[] {
-  const blocks = Array.from(container.querySelectorAll<HTMLElement>("[data-review-block-id]"));
-  const startIndex = blocks.findIndex(
-    (block) => block.dataset.reviewBlockId === anchor.startBlockId
-  );
-  const endIndex = blocks.findIndex((block) => block.dataset.reviewBlockId === anchor.endBlockId);
-  if (startIndex < 0 || endIndex < 0 || startIndex > endIndex) {
-    return [];
-  }
-
-  return blocks
-    .slice(startIndex, endIndex + 1)
-    .flatMap((block, localIndex, selectedBlocks) => {
-      const isStartBlock = localIndex === 0;
-      const isEndBlock = localIndex === selectedBlocks.length - 1;
-      return getTextNodeRects(
-        block,
-        isStartBlock ? anchor.startOffset : 0,
-        isEndBlock ? anchor.endOffset : (block.textContent ?? "").length
-      );
-    });
-}
-
-function getTextNodeRects(root: HTMLElement, startOffset: number, endOffset: number): DOMRect[] {
-  const normalizedStart = Math.max(0, Math.min(startOffset, endOffset));
-  const normalizedEnd = Math.max(normalizedStart, endOffset);
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const rects: DOMRect[] = [];
-  let currentOffset = 0;
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
-    const textLength = node.textContent?.length ?? 0;
-    const nextOffset = currentOffset + textLength;
-    const segmentStart = Math.max(normalizedStart, currentOffset);
-    const segmentEnd = Math.min(normalizedEnd, nextOffset);
-
-    if (segmentStart < segmentEnd) {
-      const range = document.createRange();
-      range.setStart(node, segmentStart - currentOffset);
-      range.setEnd(node, segmentEnd - currentOffset);
-      rects.push(
-        ...Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0)
-      );
-      range.detach();
-    }
-
-    currentOffset = nextOffset;
-    if (currentOffset >= normalizedEnd) {
-      break;
-    }
-  }
-
-  return rects;
-}
-
 function isDomOrderValid(start: HTMLElement, end: HTMLElement): boolean {
   if (start === end) {
     return true;
   }
   return Boolean(start.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+function isAnchorBlockKindMatch(anchor: ReviewAnchor, block: HTMLElement): boolean {
+  const expectedKind = anchor.blockFingerprint?.kind;
+  if (!expectedKind) {
+    return true;
+  }
+  return block.dataset.reviewBlockKind === expectedKind;
 }
 
 function getTextBoundary(root: HTMLElement, offset: number): { node: Text; offset: number } | null {
@@ -238,7 +188,7 @@ function resolveByTextFirst(anchor: ReviewAnchor, container: HTMLElement): Resol
     return null;
   }
 
-  if (!second || best.score - second.score >= 12 || best.score >= 70) {
+  if (!second || (best.score >= 70 && best.score - second.score >= 16)) {
     return {
       element: best.element,
       range: best.range
@@ -473,17 +423,6 @@ function getTextCandidates(text: string): string[] {
         .filter(Boolean)
     )
   );
-}
-
-function stripMarkdownSyntax(text: string): string {
-  return text
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^ {0,3}#{1,6}\s+/gm, "")
-    .replace(/[*~]/g, "")
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]+>/g, " ");
 }
 
 function buildNormalizedIndex(text: string): { text: string; map: number[] } {

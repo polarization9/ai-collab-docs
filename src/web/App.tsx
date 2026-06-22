@@ -11,6 +11,7 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import type { AgentLinkResponse } from "../shared/agentTypes";
 import type { AppSettings, RecentDocument } from "../shared/appSettingsTypes";
 import type { CodexLinkResponse } from "../shared/codexTypes";
 import type { ReviewFile } from "../shared/reviewTypes";
@@ -68,6 +69,7 @@ type ReadyLoadState = Extract<LoadState, { status: "ready" }>;
 type OpenDocumentState = {
   document: ReviewDocument;
   review: ReviewFile | null;
+  agentLink: AgentLinkResponse | null;
   codexLink: CodexLinkResponse | null;
 };
 
@@ -269,7 +271,7 @@ function AppContent({
       setState((current) =>
         addOrReplaceOpenDocument(
           current,
-          readyDocument ?? { document, review: null, codexLink: null }
+          readyDocument ?? { document, review: null, agentLink: null, codexLink: null }
         )
       );
       void reloadRecentDocuments();
@@ -546,7 +548,7 @@ function AppContent({
             key={activeDocumentState.document.id}
             document={activeDocumentState.document}
             initialReview={activeDocumentState.review}
-            initialCodexLink={activeDocumentState.codexLink}
+            initialAgentLink={activeDocumentState.agentLink}
             externalRefreshEnabled={settings.externalRefreshEnabled}
             onDocumentChange={(document) =>
               setState((current) =>
@@ -554,7 +556,7 @@ function AppContent({
                   ? updateOpenDocument(current, { document })
                   : {
                       status: "ready",
-                      documents: [{ document, review: null, codexLink: null }],
+                      documents: [{ document, review: null, agentLink: null, codexLink: null }],
                       activeDocumentId: document.id
                     }
               )
@@ -641,7 +643,7 @@ async function tryLoadReadyStateFromBootstrap(): Promise<ReadyLoadState | null> 
 async function loadOpenDocumentStateFromPath(path: string): Promise<OpenDocumentState> {
   const document = await openDocument({ path });
   const readyDocument = await tryLoadOpenDocumentState();
-  return readyDocument ?? { document, review: null, codexLink: null };
+  return readyDocument ?? { document, review: null, agentLink: null, codexLink: null };
 }
 
 async function tryLoadOpenDocumentState(): Promise<OpenDocumentState | null> {
@@ -665,6 +667,7 @@ function readyStateFromBootstrap(bootstrap: ReviewBootstrap): ReadyLoadState | n
       {
         document: bootstrap.document,
         review: bootstrap.review,
+        agentLink: bootstrap.agentLink,
         codexLink: bootstrap.codexLink
       }
     ],

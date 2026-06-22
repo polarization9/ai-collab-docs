@@ -1,4 +1,10 @@
 import type { Heading } from "./types.js";
+import type {
+  AgentConfiguredBy,
+  AgentConfiguredVia,
+  AgentProvider,
+  AgentSessionRole
+} from "./agentTypes.js";
 import type { CodexTargetType } from "./codexTypes.js";
 
 export type AnnotationStatus = "open" | "resolved";
@@ -129,6 +135,26 @@ export type ReviewEventDeliveryStatus =
 
 export type ReviewEventDeliveryMode = "manual" | "auto";
 export type ReviewEventType = "annotation_created" | "reply_followup";
+export type ReviewEventDeliveryAdapter =
+  | "codex-sdk"
+  | "app-server"
+  | "codex-exec-resume"
+  | "future-thread-api"
+  | "codex-app-server"
+  | "claude-code-cli"
+  | "workbuddy-codebuddy-cli"
+  | "custom-cli";
+
+export type ReviewEventAgentReference = {
+  provider: AgentProvider;
+  role?: AgentSessionRole;
+  sessionId?: string;
+  cwd?: string;
+  displayName?: string;
+  configuredAt?: string;
+  configuredBy?: AgentConfiguredBy;
+  configuredVia?: AgentConfiguredVia;
+};
 
 export type ReviewEvent = {
   id: string;
@@ -142,6 +168,8 @@ export type ReviewEvent = {
   targetThreadId?: string;
   targetCwd?: string;
   targetType?: CodexTargetType;
+  sourceAgent?: ReviewEventAgentReference;
+  targetAgent?: ReviewEventAgentReference;
   deliveryMode: ReviewEventDeliveryMode;
   deliveryStatus: ReviewEventDeliveryStatus;
   attemptCount: number;
@@ -149,7 +177,9 @@ export type ReviewEvent = {
   updatedAt: string;
   lastError?: string;
   delivery?: {
-    adapter?: "codex-sdk" | "app-server" | "codex-exec-resume" | "future-thread-api";
+    adapter?: ReviewEventDeliveryAdapter;
+    provider?: AgentProvider;
+    sessionId?: string;
     threadId?: string;
     turnId?: string;
     deliveryId?: string;

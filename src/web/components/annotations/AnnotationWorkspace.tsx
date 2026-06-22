@@ -10,22 +10,22 @@ import {
   useState
 } from "react";
 import { parseHeadingLocations, parseHeadings } from "../../../shared/markdownHeadings";
+import type { AgentLinkResponse } from "../../../shared/agentTypes";
 import type {
   ReviewAnchor,
   ReviewEventDeliveryStatus,
   ReviewFile
 } from "../../../shared/reviewTypes";
-import type { CodexLinkResponse } from "../../../shared/codexTypes";
 import type { Heading, ReviewDocument } from "../../../shared/types";
 import {
   checkDocumentMergeStatus,
-  createSuccessorInstruction,
-  fetchCodexLink,
+  createAgentSuccessorInstruction,
+  fetchAgentLink,
   fetchDocument,
   retryReviewEvent,
   saveDocument,
-  sendAnnotationToCodex,
-  updateCodexLink
+  sendAnnotationToAgent,
+  updateAgentLink
 } from "../../api";
 import type { AnnotationDraft } from "../../review/anchorCapture";
 import { captureAnnotationDraft } from "../../review/anchorCapture";
@@ -63,7 +63,7 @@ const AUTO_REVIEW_POLL_STATUSES = new Set<ReviewEventDeliveryStatus>([
 type AnnotationWorkspaceProps = {
   document: ReviewDocument;
   initialReview?: ReviewFile | null;
-  initialCodexLink?: CodexLinkResponse | null;
+  initialAgentLink?: AgentLinkResponse | null;
   onDocumentChange: (document: ReviewDocument) => void;
   externalRefreshEnabled?: boolean;
 };
@@ -104,7 +104,7 @@ function hasAutoReviewPollEvents(review: ReviewFile | null | undefined): boolean
 export function AnnotationWorkspace({
   document,
   initialReview = null,
-  initialCodexLink = null,
+  initialAgentLink = null,
   onDocumentChange,
   externalRefreshEnabled = true
 }: AnnotationWorkspaceProps) {
@@ -136,8 +136,9 @@ export function AnnotationWorkspace({
   const [isSaving, setIsSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [codexLink, setCodexLink] = useState<CodexLinkResponse | null>(initialCodexLink);
-  const [codexLinkError, setCodexLinkError] = useState<string | null>(null);
+  const [agentLink, setAgentLink] = useState<AgentLinkResponse | null>(initialAgentLink);
+  const [agentLinkError, setAgentLinkError] = useState<string | null>(null);
+  const didInitializeAgentLinkRef = useRef(false);
   const review = useReview(document.id, initialReview, document.absolutePath);
   const isDirty = editorDraft !== editorBaseContent;
   const annotations = useMemo(
@@ -211,13 +212,13 @@ export function AnnotationWorkspace({
     return () => window.clearTimeout(timer);
   }, [documentUpdateState.kind]);
 
-  const reloadCodexLink = useCallback(async () => {
+  const reloadAgentLink = useCallback(async () => {
     try {
-      setCodexLink(await fetchCodexLink(document.absolutePath));
-      setCodexLinkError(null);
+      setAgentLink(await fetchAgentLink(document.absolutePath));
+      setAgentLinkError(null);
     } catch (error) {
-      setCodexLink(null);
-      setCodexLinkError(error instanceof Error ? error.message : t("document.codexStatusFailed"));
+      setAgentLink(null);
+      setAgentLinkError(error instanceof Error ? error.message : t("document.agentStatusFailed"));
     }
   }, [document.absolutePath, t]);
 
@@ -233,7 +234,7 @@ export function AnnotationWorkspace({
       const nextDocument = await fetchDocument(document.absolutePath);
       onDocumentChange(nextDocument);
       void review.reload({ silent: true });
-      void reloadCodexLink();
+      void reloadAgentLink();
       if (showNotice) {
         showAutoUpdated(source);
       }
@@ -243,7 +244,7 @@ export function AnnotationWorkspace({
   }, [
     document.absolutePath,
     onDocumentChange,
-    reloadCodexLink,
+    reloadAgentLink,
     review.reload,
     showAutoUpdated
   ]);
@@ -296,7 +297,7 @@ export function AnnotationWorkspace({
 
         onDocumentChange(nextDocument);
         void review.reload({ silent: true });
-        void reloadCodexLink();
+        void reloadAgentLink();
         showAutoUpdated(source);
         return;
       }
@@ -322,7 +323,7 @@ export function AnnotationWorkspace({
 
         onDocumentChange(nextDocument);
         void review.reload({ silent: true });
-        void reloadCodexLink();
+        void reloadAgentLink();
 
         if (mergeStatus.status === "unchanged") {
           return;
@@ -379,20 +380,19 @@ export function AnnotationWorkspace({
     isEditing,
     isInteractingWithDocument,
     onDocumentChange,
-    reloadCodexLink,
+    reloadAgentLink,
     review.reload,
     showAutoUpdated
   ]);
 
   useEffect(() => {
-    if (initialCodexLink) {
-      setCodexLink(initialCodexLink);
-      setCodexLinkError(null);
+    if (didInitializeAgentLinkRef.current) {
       return;
     }
+    didInitializeAgentLinkRef.current = true;
 
-    void reloadCodexLink();
-  }, [document.id, initialCodexLink, reloadCodexLink]);
+    void reloadAgentLink();
+  }, [reloadAgentLink]);
 
   useEffect(() => {
     if (!isSidebarOpen) {
@@ -400,12 +400,12 @@ export function AnnotationWorkspace({
     }
 
     const handleFocus = () => {
-      void reloadCodexLink();
+      void reloadAgentLink();
     };
 
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
-  }, [isSidebarOpen, reloadCodexLink]);
+  }, [isSidebarOpen, reloadAgentLink]);
 
   useEffect(() => {
     if (!hasPendingReviewEvents) {
@@ -420,8 +420,8 @@ export function AnnotationWorkspace({
       }
 
       if (hasAutoReviewPollEvents(previousReview) && !hasAutoReviewPollEvents(nextReview)) {
-        void reloadCodexLink();
-        void handleDetectedDocumentChange("codex");
+        void reloadAgentLink();
+        void handleDetectedDocumentChange("agent");
       }
     };
 
@@ -430,7 +430,7 @@ export function AnnotationWorkspace({
   }, [
     hasPendingReviewEvents,
     handleDetectedDocumentChange,
-    reloadCodexLink,
+    reloadAgentLink,
     review.reload
   ]);
 
@@ -488,10 +488,10 @@ export function AnnotationWorkspace({
 
     const timer = window.setInterval(() => {
       void review.reload({ silent: true });
-      void reloadCodexLink();
+      void reloadAgentLink();
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [isSidebarOpen, reloadCodexLink, review.reload]);
+  }, [isSidebarOpen, reloadAgentLink, review.reload]);
 
   const captureSelection = useCallback(() => {
     if (isEditing) {
@@ -522,7 +522,7 @@ export function AnnotationWorkspace({
 
   const selectAnnotation = (annotationId: string, options: { scroll?: boolean } = {}) => {
     setIsSidebarOpen(true);
-    void reloadCodexLink();
+    void reloadAgentLink();
     review.setSelectedAnnotationId(annotationId);
     if (options.scroll === false) {
       return;
@@ -532,6 +532,14 @@ export function AnnotationWorkspace({
     if (annotation && container) {
       scrollToAnnotation(annotation, container);
     }
+  };
+
+  const toggleAnnotationCard = (annotationId: string) => {
+    if (review.selectedAnnotationId === annotationId) {
+      review.setSelectedAnnotationId(null);
+      return;
+    }
+    selectAnnotation(annotationId);
   };
 
   const enterEditMode = () => {
@@ -748,28 +756,31 @@ export function AnnotationWorkspace({
   };
 
   const toggleAutoMonitor = async (enabled: boolean) => {
-    if (enabled && !codexLink?.connection.hasTarget) {
-      setFeedback(t("toast.needCodexBinding"));
+    if (enabled && !agentLink?.connection.hasTarget) {
+      setFeedback(t("toast.needAgentBinding"));
       return;
     }
 
     try {
-      const response = await updateCodexLink({
+      const response = await updateAgentLink({
         bridge: {
           autoSendNewAnnotations: enabled
         }
       }, document.absolutePath);
-      setCodexLink(response);
-      setCodexLinkError(null);
+      setAgentLink(response);
+      setAgentLinkError(null);
       setFeedback(enabled ? t("toast.autoMonitorOn") : t("toast.autoMonitorOff"));
     } catch (error) {
-      setCodexLinkError(error instanceof Error ? error.message : t("document.autoMonitorUpdateFailed"));
+      setAgentLinkError(error instanceof Error ? error.message : t("document.autoMonitorUpdateFailed"));
     }
   };
 
   const copySuccessorConnectionInstruction = async () => {
     try {
-      const response = await createSuccessorInstruction(document.absolutePath);
+      const response = await createAgentSuccessorInstruction(
+        document.absolutePath,
+        agentLink?.connection.provider ?? "codex"
+      );
       await copyText(response.instruction);
       setFeedback(t("toast.copyReconnect"));
     } catch (error) {
@@ -778,32 +789,32 @@ export function AnnotationWorkspace({
   };
 
   const sendAnnotation = async (annotationId: string) => {
-    const response = await sendAnnotationToCodex(annotationId, document.absolutePath);
+    const response = await sendAnnotationToAgent(annotationId, document.absolutePath);
     review.replaceReview(response.review);
     if (response.needsBinding) {
-      setFeedback(t("toast.needCodexBinding"));
+      setFeedback(t("toast.needAgentBinding"));
       return;
     }
-    setFeedback(response.ok ? t("toast.codexQueued") : t("toast.codexFailed"));
+    setFeedback(response.ok ? t("toast.agentQueued") : t("toast.agentFailed"));
   };
 
   const retryEvent = async (eventId: string) => {
     const response = await retryReviewEvent(eventId, document.absolutePath);
     review.replaceReview(response.review);
-    setFeedback(response.ok ? t("toast.codexRetryQueued") : t("toast.codexRetryFailed"));
+    setFeedback(response.ok ? t("toast.agentRetryQueued") : t("toast.agentRetryFailed"));
   };
 
   const toggleAnnotationSidebar = () => {
     const nextOpen = !isSidebarOpen;
     setIsSidebarOpen(nextOpen);
     if (nextOpen) {
-      void reloadCodexLink();
+      void reloadAgentLink();
     }
   };
 
-  const reloadReviewAndCodexLink = () => {
+  const reloadReviewAndAgentLink = () => {
     void review.reload();
-    void reloadCodexLink();
+    void reloadAgentLink();
   };
 
   const applyAvailableDocumentUpdate = () => {
@@ -1001,12 +1012,13 @@ export function AnnotationWorkspace({
         <AnnotationSidebar
           annotations={annotations}
           events={review.state.status === "ready" ? review.state.review.events ?? [] : []}
-          codexLink={codexLink}
-          codexLinkError={codexLinkError}
+          agentLink={agentLink}
+          agentLinkError={agentLinkError}
           selectedAnnotationId={review.selectedAnnotationId}
           isLoading={review.state.status === "loading"}
           error={review.state.status === "error" ? review.state.message : undefined}
           onSelect={selectAnnotation}
+          onToggleSelect={toggleAnnotationCard}
           onReply={review.reply}
           onEditAnnotation={review.editAnnotation}
           onDeleteAnnotation={review.removeAnnotation}
@@ -1015,9 +1027,9 @@ export function AnnotationWorkspace({
           onCreateDocumentAnnotation={createDocumentAnnotation}
           onToggleAutoMonitor={toggleAutoMonitor}
           onCopySuccessorInstruction={copySuccessorConnectionInstruction}
-          onSendToCodex={sendAnnotation}
+          onSendToAgent={sendAnnotation}
           onRetryReviewEvent={retryEvent}
-          onReload={reloadReviewAndCodexLink}
+          onReload={reloadReviewAndAgentLink}
         />
       ) : null}
     </div>

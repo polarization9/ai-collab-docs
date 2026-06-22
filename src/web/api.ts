@@ -10,6 +10,12 @@ import type {
   RecentDocument
 } from "../shared/appSettingsTypes";
 import type {
+  AgentLinkResponse,
+  AgentProvider,
+  AgentSuccessorInstructionResponse,
+  UpdateAgentLinkRequest
+} from "../shared/agentTypes";
+import type {
   CodexLinkResponse,
   SuccessorInstructionResponse,
   UpdateCodexLinkRequest
@@ -126,6 +132,20 @@ export async function fetchCodexLink(documentPath?: string): Promise<CodexLinkRe
   return requestJson<CodexLinkResponse>(withDocumentPath("/api/codex-link", documentPath));
 }
 
+export async function fetchAgentLink(documentPath?: string): Promise<AgentLinkResponse> {
+  return requestJson<AgentLinkResponse>(withDocumentPath("/api/agent-link", documentPath));
+}
+
+export async function updateAgentLink(
+  request: UpdateAgentLinkRequest,
+  documentPath?: string
+): Promise<AgentLinkResponse> {
+  return requestJson<AgentLinkResponse>(withDocumentPath("/api/agent-link", documentPath), {
+    method: "PUT",
+    body: JSON.stringify(request)
+  });
+}
+
 export async function updateCodexLink(
   request: UpdateCodexLinkRequest,
   documentPath?: string
@@ -147,6 +167,19 @@ export async function createSuccessorInstruction(
   );
 }
 
+export async function createAgentSuccessorInstruction(
+  documentPath?: string,
+  provider: AgentProvider = "codex"
+): Promise<AgentSuccessorInstructionResponse> {
+  return requestJson<AgentSuccessorInstructionResponse>(
+    withDocumentPath("/api/agent-link/successor-instruction", documentPath),
+    {
+      method: "POST",
+      body: JSON.stringify({ provider })
+    }
+  );
+}
+
 export async function copySuccessorInstruction(
   documentPath?: string
 ): Promise<SuccessorInstructionResponse> {
@@ -154,6 +187,19 @@ export async function copySuccessorInstruction(
     withDocumentPath("/api/codex-link/successor-instruction/copy", documentPath),
     {
       method: "POST"
+    }
+  );
+}
+
+export async function copyAgentSuccessorInstruction(
+  documentPath?: string,
+  provider: AgentProvider = "codex"
+): Promise<AgentSuccessorInstructionResponse> {
+  return requestJson<AgentSuccessorInstructionResponse>(
+    withDocumentPath("/api/agent-link/successor-instruction/copy", documentPath),
+    {
+      method: "POST",
+      body: JSON.stringify({ provider })
     }
   );
 }
@@ -304,8 +350,15 @@ export async function sendAnnotationToCodex(
   annotationId: string,
   documentPath?: string
 ): Promise<BridgeSendAnnotationResponse> {
+  return sendAnnotationToAgent(annotationId, documentPath);
+}
+
+export async function sendAnnotationToAgent(
+  annotationId: string,
+  documentPath?: string
+): Promise<BridgeSendAnnotationResponse> {
   return requestJson<BridgeSendAnnotationResponse>(
-    withDocumentPath(`/api/bridge/annotations/${annotationId}/send`, documentPath),
+    withDocumentPath(`/api/bridge/annotations/${annotationId}/send-to-agent`, documentPath),
     {
       method: "POST"
     }

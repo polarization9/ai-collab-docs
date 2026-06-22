@@ -29,7 +29,6 @@
     "externalBin": ["binaries/margent-server"],
     "resources": {
       "../dist": "_up_/dist",
-      "../node_modules": "_up_/node_modules",
       "resources/node": "resources/node",
       "resources/en.lproj": "en.lproj",
       "resources/zh-Hans.lproj": "zh-Hans.lproj"
@@ -57,6 +56,12 @@
       "desktop": {
         "schemes": ["margent"]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGOEI0NzkxRUMwQkU3RUYKUldUdjV3dnNrVWVMajRURXBWVE1MQ0hGZ3Y3L1FvOXIrYWZxbjJ3RWM2bmxhVkZ1NE1KOXVBUEUK",
+      "endpoints": [
+        "https://github.com/polarization9/ai-collab-docs/releases/latest/download/latest.json"
+      ]
     }
   }
 }

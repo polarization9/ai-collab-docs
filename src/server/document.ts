@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { parseHeadings } from "../shared/markdownHeadings.js";
 import type { ReviewDocument } from "../shared/types.js";
 import {
+  getAgentLinkPath,
   getCodexLinkPath,
   getDisplayRelativePath,
   getDocumentId,
@@ -20,6 +21,7 @@ export async function loadReviewDocument(
     absolutePath,
     relativePath: getDisplayRelativePath(absolutePath, cwd),
     reviewPath: getReviewPath(absolutePath),
+    agentLinkPath: getAgentLinkPath(absolutePath),
     codexLinkPath: getCodexLinkPath(absolutePath),
     content,
     contentHash: createContentHash(content),

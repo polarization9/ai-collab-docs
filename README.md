@@ -1,6 +1,6 @@
 # Margent
 
-Margent is a local-first desktop workspace for reading, annotating, lightly editing, and handing off Markdown review tasks to Codex.
+Margent is a local-first desktop workspace for reading, annotating, lightly editing, and handing off Markdown review tasks to AI agents.
 
 It is designed for people who already work through Markdown documents and want a focused review layer without moving files into a cloud platform.
 
@@ -9,8 +9,8 @@ It is designed for people who already work through Markdown documents and want a
 - Lightweight Markdown reading for local `.md` and `.markdown` files.
 - In-document annotations for review, discussion, and resolution tracking.
 - Light editing inside the reading flow for small wording or structure fixes.
-- Codex collaboration through a local handoff channel for annotation tasks.
-- Local-first storage: annotations and Codex linkage stay next to the Markdown document.
+- Agent collaboration through a local handoff channel for annotation tasks.
+- Local-first storage: annotations and Agent linkage stay next to the Markdown document.
 
 ## Quick Start
 
@@ -47,18 +47,19 @@ Margent keeps document-related data next to the Markdown file:
 ```text
 Document.md
 Document.review.json
-Document.codex.json
+Document.margent-agent.json
 ```
 
 - `Document.md` is the Markdown source.
 - `Document.review.json` stores annotations, replies, status, and review events.
-- `Document.codex.json` stores local Codex session linkage.
+- `Document.margent-agent.json` stores local Agent session linkage.
+- Existing `Document.codex.json` files are still read for Codex compatibility.
 
 Margent starts a local `127.0.0.1` service for the desktop app. It does not expose a public network service.
 
-## Codex Collaboration
+## Agent Collaboration
 
-Margent can send annotation tasks to Codex when the current document is connected to a Codex session.
+Margent can send annotation tasks to a connected Agent session. Codex is the first fully supported provider and remains the default provider for automatic collaboration.
 
 For first setup, ask Codex to initialize Margent on your machine and read [Margent Codex 初始化指南.md](docs/Margent%20Codex%20初始化指南.md). The initialization should cover:
 
@@ -92,7 +93,7 @@ Margent is released under the MIT License. See [LICENSE](LICENSE).
 
 # 中文说明
 
-Margent 是一个本地优先的桌面工作区，用来阅读 Markdown、添加批注、做轻量编辑，并把文档审阅任务交给 Codex。
+Margent 是一个本地优先的桌面工作区，用来阅读 Markdown、添加批注、做轻量编辑，并把文档审阅任务交给 AI Agent。
 
 它适合已经围绕 Markdown 文档工作的人：不需要把文档迁移到云端平台，也可以获得一个更适合审阅、讨论和交给 AI Agent 修改的工作流。
 
@@ -101,8 +102,8 @@ Margent 是一个本地优先的桌面工作区，用来阅读 Markdown、添加
 - 轻量化阅读本地 `.md` 和 `.markdown` 文件。
 - 在文档中添加批注，用于审阅、讨论和解决状态追踪。
 - 在阅读流程中做轻编辑，适合小范围文案或结构调整。
-- 通过本地协作通道把批注任务交给 Codex。
-- 本地优先存储：批注和 Codex 连接信息都保存在 Markdown 文档旁边。
+- 通过本地协作通道把批注任务交给 Agent。
+- 本地优先存储：批注和 Agent 连接信息都保存在 Markdown 文档旁边。
 
 ## 快速开始
 
@@ -139,18 +140,19 @@ Margent 会把文档相关数据保存在 Markdown 文件旁边：
 ```text
 Document.md
 Document.review.json
-Document.codex.json
+Document.margent-agent.json
 ```
 
 - `Document.md` 是 Markdown 正文。
 - `Document.review.json` 保存批注、回复、状态和投递事件。
-- `Document.codex.json` 保存本地 Codex 会话连接信息。
+- `Document.margent-agent.json` 保存本地 Agent 会话连接信息。
+- 已有的 `Document.codex.json` 仍会作为 Codex 兼容文件读取。
 
 Margent 会为桌面 App 启动一个本地 `127.0.0.1` 服务，不会暴露公网服务。
 
-## Codex 协作
+## Agent 协作
 
-当当前文档已经连接到 Codex 会话时，Margent 可以把批注任务交给 Codex 处理。
+当当前文档已经连接到 Agent 会话时，Margent 可以把批注任务交给 Agent 处理。Codex 是当前第一个完整支持的 provider，也是自动协作的默认 provider。
 
 首次配置时，可以让 Codex 阅读 [Margent Codex 初始化指南.md](docs/Margent%20Codex%20初始化指南.md)，并帮你完成：
 

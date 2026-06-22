@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { AgentSessionReference } from "../shared/agentTypes.js";
 import type {
   AddReplyRequest,
   AnnotationStatus,
@@ -19,7 +20,7 @@ import type {
   UpdateReviewEventRequest,
   UpdateReplyRequest
 } from "../shared/reviewTypes.js";
-import { loadCodexDocumentLink, resolveCodexTarget } from "./codexLink.js";
+import { loadAgentDocumentLink, resolveAgentTarget } from "./agentLink.js";
 import { getDocumentId, getReviewPath } from "./paths.js";
 
 const REVIEW_VERSION = 1;
@@ -246,8 +247,8 @@ export async function createReviewEvent(
     const triggerReply = request.triggerReplyId
       ? findReply(annotation, request.triggerReplyId)
       : undefined;
-    const link = await loadCodexDocumentLink(markdownPath);
-    const target = resolveCodexTarget(link);
+    const link = await loadAgentDocumentLink(markdownPath);
+    const target = resolveAgentTarget(link);
     const now = new Date().toISOString();
     const event: ReviewEvent = {
       id: createId("evt"),
@@ -256,11 +257,13 @@ export async function createReviewEvent(
       annotationId: request.annotationId,
       ...(triggerReply ? { triggerReplyId: triggerReply.id } : {}),
       ...(triggerReply?.replyTo?.replyId ? { replyToReplyId: triggerReply.replyTo.replyId } : {}),
-      sourceThreadId: link?.source?.threadId,
-      sourceCwd: link?.source?.cwd,
-      targetThreadId: target?.threadId,
-      targetCwd: target?.cwd,
-      targetType: target?.type,
+      sourceAgent: link?.source ? toReviewEventAgentRef(link.source) : undefined,
+      targetAgent: target ? toReviewEventAgentRef(target) : undefined,
+      sourceThreadId: link?.source?.provider === "codex" ? link.source.sessionId : undefined,
+      sourceCwd: link?.source?.provider === "codex" ? link.source.cwd : undefined,
+      targetThreadId: target?.provider === "codex" ? target.sessionId : undefined,
+      targetCwd: target?.provider === "codex" ? target.cwd : undefined,
+      targetType: target?.provider === "codex" ? target.role : undefined,
       deliveryMode: request.deliveryMode,
       deliveryStatus: "queued",
       attemptCount: 0,
@@ -272,6 +275,19 @@ export async function createReviewEvent(
     review.updatedAt = now;
     return saveReviewFile(markdownPath, review);
   });
+}
+
+function toReviewEventAgentRef(session: AgentSessionReference): ReviewEvent["targetAgent"] {
+  return {
+    provider: session.provider,
+    role: session.role,
+    sessionId: session.sessionId,
+    cwd: session.cwd,
+    displayName: session.displayName,
+    configuredAt: session.configuredAt,
+    configuredBy: session.configuredBy,
+    configuredVia: session.configuredVia
+  };
 }
 
 export async function listReviewEvents(
@@ -424,7 +440,7 @@ function normalizeReviewFile(review: Partial<ReviewFile>, markdownPath: string):
   }
 
   const now = new Date().toISOString();
-  return {
+  return repairCompletedReviewEvents({
     version: REVIEW_VERSION,
     documentPath: markdownPath,
     documentId: getDocumentId(markdownPath),
@@ -432,7 +448,69 @@ function normalizeReviewFile(review: Partial<ReviewFile>, markdownPath: string):
     updatedAt: review.updatedAt ?? review.createdAt ?? now,
     annotations: Array.isArray(review.annotations) ? review.annotations : [],
     events: Array.isArray(review.events) ? review.events.map(normalizeReviewEvent) : []
-  };
+  });
+}
+
+function repairCompletedReviewEvents(review: ReviewFile): ReviewFile {
+  for (const event of review.events ?? []) {
+    if (event.deliveryStatus === "handled" || event.deliveryStatus === "ignored") {
+      continue;
+    }
+
+    const annotation = review.annotations.find((item) => item.id === event.annotationId);
+    if (!annotation || !hasCompletionEvidenceForEvent(annotation, event)) {
+      continue;
+    }
+
+    event.deliveryStatus = "handled";
+    event.lastError = undefined;
+    event.updatedAt = getCompletionEvidenceTime(annotation, event) ?? event.updatedAt;
+  }
+
+  return review;
+}
+
+function hasCompletionEvidenceForEvent(
+  annotation: ReviewAnnotation,
+  event: ReviewEvent
+): boolean {
+  const eventCreatedAt = parseReviewTime(event.createdAt);
+  const resolvedAt = parseReviewTime(annotation.resolvedAt ?? annotation.updatedAt);
+  if (annotation.status === "resolved" && resolvedAt >= eventCreatedAt) {
+    return true;
+  }
+
+  return annotation.replies.some(
+    (reply) =>
+      reply.author.type === "agent" &&
+      parseReviewTime(reply.createdAt) >= eventCreatedAt
+  );
+}
+
+function getCompletionEvidenceTime(
+  annotation: ReviewAnnotation,
+  event: ReviewEvent
+): string | undefined {
+  const eventCreatedAt = parseReviewTime(event.createdAt);
+  const evidenceTimes = [
+    annotation.status === "resolved" ? annotation.resolvedAt ?? annotation.updatedAt : undefined,
+    ...annotation.replies
+      .filter(
+        (reply) =>
+          reply.author.type === "agent" &&
+          parseReviewTime(reply.createdAt) >= eventCreatedAt
+      )
+      .map((reply) => reply.createdAt)
+  ].filter((value): value is string => Boolean(value));
+
+  return evidenceTimes.sort(
+    (left, right) => parseReviewTime(right) - parseReviewTime(left)
+  )[0];
+}
+
+function parseReviewTime(value: string | undefined): number {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function findAnnotation(review: ReviewFile, annotationId: string): ReviewAnnotation {
@@ -511,7 +589,6 @@ function markOpenAnnotationEventsIgnored(
   }
 }
 
-
 function markAnnotationEventHandled(
   review: ReviewFile,
   annotationId: string,
@@ -529,7 +606,7 @@ function markAnnotationEventHandled(
     return;
   }
 
-  if (!OPEN_EVENT_STATUSES.has(event.deliveryStatus)) {
+  if (!OPEN_EVENT_STATUSES.has(event.deliveryStatus) && event.deliveryStatus !== "failed") {
     return;
   }
 
@@ -537,6 +614,7 @@ function markAnnotationEventHandled(
   event.updatedAt = now;
   event.lastError = undefined;
 }
+
 function createReplyTarget(reply: ReviewReply): ReviewReply["replyTo"] {
   return {
     replyId: reply.id,
