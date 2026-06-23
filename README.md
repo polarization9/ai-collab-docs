@@ -16,7 +16,7 @@ It is designed for people who already work through Markdown documents and want a
 
 Download the latest `Margent_*_aarch64.dmg` artifact from the GitHub Release page, open it, and drag `Margent.app` into `Applications`.
 
-Current local builds are ad-hoc signed. If macOS says the developer cannot be verified, right-click `Margent.app` in Finder and choose `Open`.
+GitHub release builds are signed with Apple Developer ID and notarized. If macOS still shows a warning after a manual local build, right-click `Margent.app` in Finder and choose `Open`.
 
 After launching Margent for the first time, the recent documents list should include a Quickstart document for the active language. Open it to try reading, annotations, Mermaid, tables, and light editing.
 
@@ -65,11 +65,12 @@ For first setup, ask Codex to initialize Margent on your machine and read [Marge
 
 - installing or verifying Margent;
 - setting Margent as the default app for Markdown files when possible;
+- installing or repairing the Codex MCP registration in `~/.codex/config.toml`;
 - verifying that Codex can access Margent review tools;
 - binding the current Codex session to the active Markdown document when needed;
 - verifying one annotation handling loop.
 
-If Codex cannot see Margent MCP or reviewer tools, it should say that the collaboration channel is not connected instead of pretending it can process annotations.
+If Codex cannot see Margent MCP or reviewer tools, ask it to execute the "安装 / 修复 Codex MCP 连接" section in the initialization guide. Codex should say that the collaboration channel is not connected instead of pretending it can process annotations.
 
 ## Adoption Metrics
 
@@ -109,7 +110,7 @@ Margent 是一个本地优先的桌面工作区，用来阅读 Markdown、添加
 
 从 GitHub Release 页面下载最新的 `Margent_*_aarch64.dmg`，打开后把 `Margent.app` 拖到 `Applications`。
 
-当前本地构建是 ad-hoc 签名。如果 macOS 提示无法验证开发者，可以在 Finder 里右键 `Margent.app`，选择 `打开`。
+GitHub Release 构建已使用 Apple Developer ID 签名并通过 notarization。如果你运行的是本机手动构建，macOS 仍可能提示无法验证开发者，可以在 Finder 里右键 `Margent.app`，选择 `打开`。
 
 首次启动 Margent 后，最近文件列表里会出现一份和当前语言匹配的 Quickstart 文档。打开它可以体验阅读、批注、Mermaid、表格和轻编辑。
 
@@ -158,11 +159,12 @@ Margent 会为桌面 App 启动一个本地 `127.0.0.1` 服务，不会暴露公
 
 - 安装或确认 Margent 可用；
 - 在可能的情况下，将 Margent 设置为 Markdown 文件默认打开方式；
+- 在 `~/.codex/config.toml` 中安装或修复 Codex MCP 注册；
 - 确认 Codex 可以访问 Margent 的批注工具；
 - 在需要时，把当前 Codex 会话绑定到正在处理的 Markdown 文档；
 - 用一条真实或测试批注验证协作链路。
 
-如果 Codex 看不到 Margent MCP 或 reviewer 工具，需要明确说明协作通道尚未连接，不能假装已经可以处理批注。
+如果 Codex 看不到 Margent MCP 或 reviewer 工具，请让它执行初始化指南里的“安装 / 修复 Codex MCP 连接”章节。协作通道尚未连接时，Codex 需要明确说明，不能假装已经可以处理批注。
 
 ## 使用数据
 
