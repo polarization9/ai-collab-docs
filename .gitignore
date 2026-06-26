@@ -11,6 +11,7 @@ src-tauri/resources/node/
 .DS_Store
 npm-debug.log*
 outputs/
+.margent-metrics/
 docs/*.review.json
 docs/*.codex.json
 docs/*.margent-agent.json

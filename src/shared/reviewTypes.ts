@@ -219,6 +219,8 @@ export type AddReplyRequest = {
   author?: ReviewAuthor;
   body: string;
   replyToReplyId?: string;
+  eventId?: string;
+  resolveAnnotation?: boolean;
 };
 
 export type UpdateAnnotationRequest = {

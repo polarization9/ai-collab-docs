@@ -174,8 +174,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
       const document = await loadReviewDocument(nextMarkdownPath);
       documentContentCache.set(nextMarkdownPath, document.content);
       await rememberRecentDocument(nextMarkdownPath);
-      await discoverAgentSourceIfEnabled(nextMarkdownPath);
-      dispatchReviewEventsInBackground(nextMarkdownPath);
+      discoverAgentSourceAndDispatchReviewEventsInBackground(nextMarkdownPath);
       response.json(document);
     } catch (error) {
       sendApiError(response, error);
@@ -190,8 +189,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
       const document = await loadReviewDocument(nextMarkdownPath);
       documentContentCache.set(nextMarkdownPath, document.content);
       await rememberRecentDocument(nextMarkdownPath);
-      await discoverAgentSourceIfEnabled(nextMarkdownPath);
-      dispatchReviewEventsInBackground(nextMarkdownPath);
+      discoverAgentSourceAndDispatchReviewEventsInBackground(nextMarkdownPath);
       response.json(document);
     } catch (error) {
       sendApiError(response, error);
@@ -712,6 +710,22 @@ async function discoverAgentSourceIfEnabled(markdownPath: string): Promise<void>
     return;
   }
   await discoverAgentSourceForDocument(markdownPath);
+}
+
+function discoverAgentSourceAndDispatchReviewEventsInBackground(markdownPath: string): void {
+  setTimeout(() => {
+    void (async () => {
+      try {
+        await discoverAgentSourceIfEnabled(markdownPath);
+      } catch (error) {
+        console.error(
+          `[Margent] Failed to discover agent source for ${markdownPath}:`,
+          error
+        );
+      }
+      dispatchReviewEventsInBackground(markdownPath);
+    })();
+  }, 0);
 }
 
 function openMarkdownPathFromRequest(body: OpenDocumentRequest): string {

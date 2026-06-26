@@ -175,7 +175,16 @@ function AppContent({
       : { status: "unsupported" }
   );
   const activeDocumentState = state.status === "ready" ? getActiveDocumentState(state) : null;
+  const hasToc = (activeDocumentState?.document.headings.length ?? 0) > 0;
+  const shouldShowToc = hasToc && isTocOpen;
   const activeId = useActiveHeading(activeDocumentState?.document.headings ?? []);
+
+  useEffect(() => {
+    if (!activeDocumentState) {
+      return;
+    }
+    setIsTocOpen(activeDocumentState.document.headings.length > 0);
+  }, [activeDocumentState?.document.id]);
 
   const runUpdateCheck = useCallback(async () => {
     if (!isAppUpdaterSupported()) {
@@ -524,8 +533,8 @@ function AppContent({
           void closeOpenDocument(documentId);
         }}
       />
-      <div className={`app-shell${isTocOpen ? "" : " app-shell-toc-collapsed"}`}>
-        {isTocOpen ? (
+      <div className={`app-shell${shouldShowToc ? "" : " app-shell-toc-collapsed"}`}>
+        {shouldShowToc ? (
           <Toc
             headings={activeDocumentState.document.headings}
             activeId={activeId}
@@ -533,7 +542,7 @@ function AppContent({
           />
         ) : null}
         <main className="document-pane">
-          {!isTocOpen ? (
+          {hasToc && !shouldShowToc ? (
             <button
               type="button"
               className="toc-open-button"

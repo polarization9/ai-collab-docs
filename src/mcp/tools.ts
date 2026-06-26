@@ -374,7 +374,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
     {
       title: "Add Annotation Reply",
       description:
-        "Append an Agent reply to an annotation. If the reply fully answers a question or explains a completed document edit, you may then call reviewer_update_annotation_status with status='resolved'. If information is insufficient or the user must decide, leave it open.",
+        "Append an Agent reply to an annotation. If the reply fully answers a question, pass resolveAnnotation=true and eventId so Margent can mark the annotation resolved and the review event handled in the same write. If information is insufficient or the user must decide, leave it open.",
       inputSchema: {
         documentPath: z.string().min(1).optional().describe("Optional Markdown path."),
         annotationId: z.string().min(1).describe("Annotation id to reply to."),
@@ -388,7 +388,16 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           .string()
           .min(1)
           .optional()
-          .describe("Optional agent display name. Defaults to the current Agent provider name.")
+          .describe("Optional agent display name. Defaults to the current Agent provider name."),
+        eventId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional review event id to mark handled when resolveAnnotation is true."),
+        resolveAnnotation: z
+          .boolean()
+          .optional()
+          .describe("When true, mark the annotation resolved after appending this reply.")
       },
       annotations: {
         readOnlyHint: false,
@@ -397,14 +406,24 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         openWorldHint: false
       }
     },
-    async ({ documentPath, annotationId, body, replyToReplyId, authorName }) =>
+    async ({
+      documentPath,
+      annotationId,
+      body,
+      replyToReplyId,
+      authorName,
+      eventId,
+      resolveAnnotation
+    }) =>
       jsonToolResult(
         await addReplyPayload(
           resolveToolMarkdownPath(markdownPath, documentPath),
           annotationId,
           body,
           authorName,
-          replyToReplyId
+          replyToReplyId,
+          eventId,
+          resolveAnnotation
         )
       )
   );
@@ -965,14 +984,21 @@ async function addReplyPayload(
   annotationId: string,
   body: string,
   authorName?: string,
-  replyToReplyId?: string
+  replyToReplyId?: string,
+  eventId?: string,
+  resolveAnnotation?: boolean
 ): Promise<ToolResultPayload> {
   const review = await addAnnotationReply(markdownPath, annotationId, {
     author: { type: "agent", name: authorName ?? (await getDefaultAgentAuthorName(markdownPath)) },
     body,
-    replyToReplyId
+    replyToReplyId,
+    eventId,
+    resolveAnnotation
   });
-  return changedAnnotationPayload(review, annotationId);
+  return {
+    ...changedAnnotationPayload(review, annotationId),
+    event: eventId ? review.events?.find((item) => item.id === eventId) : undefined
+  };
 }
 
 async function updateAnnotationPayload(

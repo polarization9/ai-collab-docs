@@ -33,6 +33,7 @@ type AnnotationFilter = "all" | AnnotationStatus;
 type AnnotationSidebarProps = {
   annotations: ReviewAnnotation[];
   events: ReviewEvent[];
+  pendingAnnotationIds?: string[];
   agentLink: AgentLinkResponse | null;
   agentLinkError?: string | null;
   selectedAnnotationId: string | null;
@@ -63,6 +64,7 @@ type AnnotationSidebarProps = {
 export function AnnotationSidebar({
   annotations,
   events,
+  pendingAnnotationIds = [],
   agentLink,
   agentLinkError,
   selectedAnnotationId,
@@ -201,6 +203,8 @@ export function AnnotationSidebar({
             key={annotation.id}
             annotation={annotation}
             event={getLatestAnnotationEvent(events, annotation.id)}
+            isLocallyPending={pendingAnnotationIds.includes(annotation.id)}
+            pendingProvider={agentLink?.connection.provider ?? null}
             isSelected={annotation.id === selectedAnnotationId}
             onSelect={onSelect}
             onToggleSelect={onToggleSelect}
@@ -360,6 +364,8 @@ function getAgentProviderName(provider: AgentLinkResponse["connection"]["provide
 type AnnotationCardProps = {
   annotation: ReviewAnnotation;
   event: ReviewEvent | null;
+  isLocallyPending: boolean;
+  pendingProvider: AgentProvider | null;
   isSelected: boolean;
   onSelect: (annotationId: string) => void;
   onToggleSelect: (annotationId: string) => void;
@@ -440,6 +446,18 @@ function getAnnotationEventBadge(
   }
 }
 
+function getLocalPendingEventBadge(
+  provider: AgentProvider | null,
+  t: (key: LocaleKey, params?: Record<string, string | number>) => string
+): AnnotationEventBadge {
+  const params = { provider: getAgentProviderName(provider) };
+  return {
+    label: t("event.processing", params),
+    title: t("event.processingTitle", params),
+    tone: "processing"
+  };
+}
+
 function getEventProviderName(event: ReviewEvent | null): string {
   return getAgentProviderName(getEventProvider(event));
 }
@@ -460,6 +478,8 @@ type ReplyTargetDraft = {
 function AnnotationCard({
   annotation,
   event,
+  isLocallyPending,
+  pendingProvider,
   isSelected,
   onSelect,
   onToggleSelect,
@@ -497,7 +517,9 @@ function AnnotationCard({
   const shouldExpand =
     isSelected && (isReplying || annotation.replies.length > 0 || localError);
   const hasFailedEvent = event?.deliveryStatus === "failed";
-  const eventBadge = getAnnotationEventBadge(event, t);
+  const eventBadge = isLocallyPending
+    ? getLocalPendingEventBadge(pendingProvider, t)
+    : getAnnotationEventBadge(event, t);
   const hasPendingOperation = isSaving || isReplySaving || savingReplyEditId !== null;
 
   useEffect(() => {

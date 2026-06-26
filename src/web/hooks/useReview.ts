@@ -74,6 +74,7 @@ export function useReview(
     setState({ status: "ready", review });
     const created = review.annotations[review.annotations.length - 1];
     setSelectedAnnotationId(created?.id ?? null);
+    return { review, annotation: created ?? null };
   }, [documentPath]);
 
   const reply = useCallback(async (annotationId: string, request: AddReplyRequest) => {

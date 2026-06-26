@@ -35,6 +35,7 @@ type SendToAgentInput = {
   eventId: string;
   targetRole?: AgentSessionRole;
   prompt: string;
+  createPrompt?: (options?: { reviewerMcpServerName?: string }) => string;
   onTurnStarted?: (delivery: {
     provider: AgentProvider;
     sessionId?: string;
@@ -62,7 +63,16 @@ type AgentBridgeAdapter = {
 
 const APP_SERVER_REQUEST_TIMEOUT_MS = 60000;
 const APP_SERVER_TURN_TIMEOUT_MS = getTurnTimeoutMs();
+const APP_SERVER_MCP_PREFLIGHT_TIMEOUT_MS = 20000;
 const CLI_AGENT_OUTPUT_LIMIT = 96_000;
+const REVIEWER_MCP_TOOL_NAMES = [
+  "reviewer_get_annotation_context",
+  "reviewer_add_annotation_reply",
+  "reviewer_apply_document_edit",
+  "reviewer_update_annotation_status",
+  "reviewer_mark_review_event_handled"
+];
+const CODEX_REVIEWER_MCP_SERVER_CANDIDATES = ["prd_reviewer", "margent"];
 const MARGENT_MCP_ALLOWED_TOOLS = [
   "mcp__margent__reviewer_get_annotation_context",
   "mcp__margent__reviewer_add_annotation_reply",
@@ -98,6 +108,8 @@ export async function sendAnnotationToAgent(
   markdownPath: string,
   annotationId: string
 ): Promise<BridgeSendAnnotationResponse> {
+  await recoverStaleDeliveringEvents(markdownPath);
+
   const target = await getCurrentTarget(markdownPath);
   if (!target) {
     return {
@@ -228,14 +240,20 @@ export async function dispatchReviewEvents(
 
   await markReviewEventDelivering(markdownPath, queuedEvent.id, adapter.name);
 
-  const prompt = createBridgePrompt({
+  const promptInput = {
     documentPath: markdownPath,
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
     provider: target.provider,
     targetRole: target.role,
     triggerReplyId: queuedEvent.triggerReplyId
-  });
+  };
+  const createPrompt = (options?: { reviewerMcpServerName?: string }) =>
+    createBridgePrompt({
+      ...promptInput,
+      reviewerMcpServerName: options?.reviewerMcpServerName
+    });
+  const prompt = createPrompt();
   const result = await adapter.send({
     provider: target.provider,
     sessionId: target.sessionId,
@@ -245,6 +263,7 @@ export async function dispatchReviewEvents(
     eventId: queuedEvent.id,
     targetRole: target.role,
     prompt,
+    createPrompt,
     onTurnStarted: async ({ provider, sessionId, turnId, deliveryId }) => {
       const now = new Date().toISOString();
       const latestReview = await loadReviewFile(markdownPath);
@@ -438,10 +457,15 @@ export function createBridgePrompt(input: {
   provider: AgentProvider;
   targetRole?: AgentSessionRole;
   triggerReplyId?: string;
+  reviewerMcpServerName?: string;
 }): string {
   const isFollowup = Boolean(input.triggerReplyId);
+  const toolNames = getReviewerPromptToolNames(input.provider, input.reviewerMcpServerName);
+  const codexToolPrefix = input.reviewerMcpServerName
+    ? `mcp__${input.reviewerMcpServerName}__reviewer_`
+    : "mcp__prd_reviewer__reviewer_";
   const contextCall = [
-    "   reviewer_get_annotation_context({",
+    `   ${toolNames.getContext}({`,
     `     documentPath: ${JSON.stringify(input.documentPath)},`,
     input.triggerReplyId
       ? `     annotationId: ${JSON.stringify(input.annotationId)},`
@@ -480,9 +504,17 @@ export function createBridgePrompt(input: {
     "",
     "请按以下步骤处理：",
     "",
-    "0. 如果当前工具列表里没有 Margent / reviewer 相关工具，先用工具发现能力搜索：",
-    "   - 搜索关键词：reviewer_get_annotation_context Margent annotations",
-    "   - 目标是加载 Margent MCP 的批注读取、回复、文档编辑和事件标记工具。",
+    ...(input.provider === "codex"
+      ? [
+          "0. Codex 后台通道必须直接调用 Margent MCP 的精确工具名，不要调用裸工具名，也不要依赖 tool_search：",
+          `   - 本轮工具名前缀是 ${codexToolPrefix}。`,
+          "   - 如果本会话工具列表里显示的 server 名不是 prd_reviewer，请改用实际 server 名对应的 mcp__<server>__reviewer_ 前缀。"
+        ]
+      : [
+          "0. 如果当前工具列表里没有 Margent / reviewer 相关工具，先用工具发现能力搜索：",
+          "   - 搜索关键词：reviewer_get_annotation_context Margent annotations",
+          "   - 目标是加载 Margent MCP 的批注读取、回复、文档编辑和事件标记工具。"
+        ]),
     "",
     "1. 调用 Margent MCP 读取这条批注：",
     ...contextCall,
@@ -502,18 +534,27 @@ export function createBridgePrompt(input: {
         ]),
     "",
     "3. 如果修改了正文，请保存文档，并让 Reviewer 重新标记批注锚点在修改后的文本上。",
-    "   如果使用 reviewer_apply_document_edit 且这次修改已经解决批注，请传入 resolveAnnotation: true 和 eventId，让 Margent 同步 resolved 与 handled。",
+    `   如果使用 ${toolNames.applyDocumentEdit} 且这次修改已经解决批注，请传入 resolveAnnotation: true 和 eventId，让 Margent 同步 resolved 与 handled。`,
     "",
-    "4. 如果你已经直接回答了批注问题，或已经完成明确的正文修改，且还没有通过 reviewer_apply_document_edit(resolveAnnotation=true) 解决批注，必须调用 reviewer_update_annotation_status({",
+    `4. 如果你直接回答了批注问题，优先调用 ${toolNames.addAnnotationReply} 并传入 resolveAnnotation: true 和 eventId，一次性完成回复、resolved 与 handled。`,
+    `   ${toolNames.addAnnotationReply}({`,
+    `     documentPath: ${JSON.stringify(input.documentPath)},`,
+    `     annotationId: ${JSON.stringify(input.annotationId)},`,
+    "     body: <你的回复>,",
+    "     resolveAnnotation: true,",
+    `     eventId: ${JSON.stringify(input.eventId)}`,
+    "   })",
+    `   如果已经通过 ${toolNames.applyDocumentEdit}(resolveAnnotation=true) 解决批注，或已经通过 ${toolNames.addAnnotationReply}(resolveAnnotation=true) 回复批注，不要再单独调用 ${toolNames.updateAnnotationStatus}。`,
+    `   如果你已经完成明确的正文修改，但没有通过 ${toolNames.applyDocumentEdit}(resolveAnnotation=true) 解决批注，必须调用 ${toolNames.updateAnnotationStatus}({`,
     `   documentPath: ${JSON.stringify(input.documentPath)},`,
     `   annotationId: ${JSON.stringify(input.annotationId)},`,
     '   status: "resolved",',
     `   eventId: ${JSON.stringify(input.eventId)}`,
     "})。",
-    "   Margent 会在这次 resolved 写入中同步把本轮 event 标记为 handled，不需要再单独调用 reviewer_mark_review_event_handled。",
+    `   Margent 会在这次 resolved 写入中同步把本轮 event 标记为 handled，不需要再单独调用 ${toolNames.markEventHandled}。`,
     "   如果只是提出澄清问题、等待用户决策，或说明当前无法安全处理，则保持 open，并在回复里说明原因。",
     "",
-    "5. 只有当你保持批注 open，但本轮已经回复、澄清或说明无法处理时，才调用 reviewer_mark_review_event_handled({",
+    `5. 只有当你保持批注 open，但本轮已经回复、澄清或说明无法处理时，才调用 ${toolNames.markEventHandled}({`,
     `   documentPath: ${JSON.stringify(input.documentPath)},`,
     `   eventId: ${JSON.stringify(input.eventId)}`,
     "})。",
@@ -540,6 +581,37 @@ export function createBridgePrompt(input: {
   }
 
   return base.join("\n");
+}
+
+function getReviewerPromptToolNames(provider: AgentProvider, reviewerMcpServerName?: string): {
+  getContext: string;
+  addAnnotationReply: string;
+  applyDocumentEdit: string;
+  updateAnnotationStatus: string;
+  markEventHandled: string;
+} {
+  const prefix = provider === "codex" ? `mcp__${reviewerMcpServerName ?? "prd_reviewer"}__` : "";
+  return {
+    getContext: `${prefix}reviewer_get_annotation_context`,
+    addAnnotationReply: `${prefix}reviewer_add_annotation_reply`,
+    applyDocumentEdit: `${prefix}reviewer_apply_document_edit`,
+    updateAnnotationStatus: `${prefix}reviewer_update_annotation_status`,
+    markEventHandled: `${prefix}reviewer_mark_review_event_handled`
+  };
+}
+
+function appendCodexPromptInstructions(prompt: string, mcpServerName: string): string {
+  const prefix = `mcp__${mcpServerName}__`;
+  return [
+    prompt,
+    "",
+    "Codex app-server 额外说明：",
+    `- 本轮后台预检已经确认 Margent MCP server 可用：${mcpServerName}。`,
+    "- 必须调用下面这些精确 MCP 工具名，不要使用 tool_search，也不要调用裸工具名 reviewer_*：",
+    ...REVIEWER_MCP_TOOL_NAMES.map((toolName) => `  - ${prefix}${toolName}`),
+    "- 后台处理时不要输出中间说明，不要说“我会读取批注”“我会追加回复”“现在更新状态”；直接调用 MCP 工具，完成后最多输出一句简短结果。",
+    "- 如果你只是在普通文本里说已经处理，但没有调用 MCP 工具，Margent 会把本轮事件标记为 failed。"
+  ].join("\n");
 }
 
 function appendClaudeCodePromptInstructions(prompt: string): string {
@@ -1042,7 +1114,11 @@ function getUnavailableBridgeAdapterError(provider: AgentProvider): string {
 function requiresMcpHandledCompletion(
   adapterName: NonNullable<ReviewEvent["delivery"]>["adapter"]
 ): boolean {
-  return adapterName === "claude-code-cli" || adapterName === "workbuddy-codebuddy-cli";
+  return (
+    adapterName === "codex-app-server" ||
+    adapterName === "claude-code-cli" ||
+    adapterName === "workbuddy-codebuddy-cli"
+  );
 }
 
 function getBridgeAdapterDisplayName(
@@ -1053,6 +1129,9 @@ function getBridgeAdapterDisplayName(
   }
   if (adapterName === "workbuddy-codebuddy-cli") {
     return "WorkBuddy";
+  }
+  if (adapterName === "codex-app-server") {
+    return "Codex";
   }
   return "Agent";
 }
@@ -1111,12 +1190,19 @@ function createCodexAppServerAdapter(): AgentBridgeAdapter {
           threadId: input.sessionId
         });
         const resumedThreadId = extractThreadId(resumeResult) ?? input.sessionId;
+        const mcpPreflight = await client.ensureReviewerMcpReady(
+          resumedThreadId,
+          input.documentPath
+        );
+        const prompt = input.createPrompt?.({
+          reviewerMcpServerName: mcpPreflight.serverName
+        }) ?? input.prompt;
         const turnStartResult = await client.request("turn/start", {
-          threadId: input.sessionId,
+          threadId: resumedThreadId,
           input: [
             {
               type: "text",
-              text: input.prompt,
+              text: appendCodexPromptInstructions(prompt, mcpPreflight.serverName),
               text_elements: []
             }
           ]
@@ -1141,10 +1227,13 @@ function createCodexAppServerAdapter(): AgentBridgeAdapter {
           deliveryId
         };
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         return {
           ok: false,
           provider: "codex",
-          error: client.formatError(error)
+          error: message.startsWith("Codex app-server could not access Margent MCP tools")
+            ? message
+            : client.formatError(error)
         };
       } finally {
         client.close();
@@ -1349,6 +1438,13 @@ type TurnCompletionWaiter = {
   timeout: NodeJS.Timeout;
 };
 
+type McpStartupStatus = {
+  threadId?: string;
+  name: string;
+  status: string;
+  error?: string | null;
+};
+
 class CodexAppServerClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
@@ -1359,6 +1455,7 @@ class CodexAppServerClient {
   private completedTurns = new Set<string>();
   private turnCompletionWaiters: TurnCompletionWaiter[] = [];
   private notificationErrors: string[] = [];
+  private mcpStartupStatuses = new Map<string, McpStartupStatus>();
 
   constructor(
     private readonly command: string,
@@ -1477,6 +1574,67 @@ class CodexAppServerClient {
     });
   }
 
+  async ensureReviewerMcpReady(
+    threadId: string,
+    documentPath: string
+  ): Promise<{ serverName: string }> {
+    const deadline = Date.now() + APP_SERVER_MCP_PREFLIGHT_TIMEOUT_MS;
+    let didRequestReload = false;
+    let lastDiagnostic = "Margent MCP server was not listed by Codex app-server.";
+
+    while (Date.now() < deadline) {
+      const statusResult = await this.request("mcpServerStatus/list", {
+        threadId,
+        detail: "toolsAndAuthOnly",
+        limit: 100
+      });
+      const statuses = extractMcpServerStatuses(statusResult);
+      const reviewerServer = findReviewerMcpServer(statuses);
+
+      if (reviewerServer) {
+        const startupStatus = this.getMcpStartupStatus(threadId, reviewerServer.name);
+        const canProbeReviewerServer =
+          startupStatus?.status === "ready" || hasReviewerMcpTools(reviewerServer);
+        if (startupStatus?.status === "failed") {
+          lastDiagnostic = `Margent MCP server ${reviewerServer.name} failed to start: ${startupStatus.error ?? "unknown error"}`;
+          if (!didRequestReload) {
+            didRequestReload = true;
+            await this.request("config/mcpServer/reload", {}).catch(() => undefined);
+          }
+        } else if (canProbeReviewerServer) {
+          try {
+            await this.request("mcpServer/tool/call", {
+              threadId,
+              server: reviewerServer.name,
+              tool: "reviewer_get_session",
+              arguments: {
+                documentPath
+              }
+            });
+            return { serverName: reviewerServer.name };
+          } catch (error) {
+            lastDiagnostic = `Margent MCP server ${reviewerServer.name} was listed, but reviewer_get_session failed: ${formatUnknown(error)}`;
+          }
+        } else if (!startupStatus || startupStatus.status === "starting") {
+          lastDiagnostic = `Margent MCP server ${reviewerServer.name} is still starting.`;
+        } else {
+          lastDiagnostic = `Margent MCP server ${reviewerServer.name} status is ${startupStatus.status}.`;
+        }
+      } else {
+        lastDiagnostic = formatMcpPreflightDiagnostic(statuses);
+        if (!didRequestReload) {
+          didRequestReload = true;
+          await this.request("config/mcpServer/reload", {}).catch(() => undefined);
+        }
+      }
+      await sleep(500);
+    }
+
+    throw new Error(
+      `Codex app-server could not access Margent MCP tools in this background turn. ${lastDiagnostic}`
+    );
+  }
+
   close(): void {
     this.closing = true;
     for (const pending of this.pendingRequests.values()) {
@@ -1565,6 +1723,14 @@ class CodexAppServerClient {
       return;
     }
 
+    if (method === "mcpServer/startupStatus/updated") {
+      const status = extractMcpStartupStatus(params);
+      if (status) {
+        this.mcpStartupStatuses.set(getMcpStartupStatusKey(status.threadId, status.name), status);
+      }
+      return;
+    }
+
     if (method !== "turn/completed") {
       return;
     }
@@ -1609,6 +1775,14 @@ class CodexAppServerClient {
     this.stderrTail = `${this.stderrTail}${chunk}`.slice(-4000);
   }
 
+  private getMcpStartupStatus(threadId: string, name: string): McpStartupStatus | null {
+    return (
+      this.mcpStartupStatuses.get(getMcpStartupStatusKey(threadId, name)) ??
+      this.mcpStartupStatuses.get(getMcpStartupStatusKey(undefined, name)) ??
+      null
+    );
+  }
+
   private trimNotificationErrors(): void {
     if (this.notificationErrors.length > 5) {
       this.notificationErrors = this.notificationErrors.slice(-5);
@@ -1625,6 +1799,98 @@ class CodexAppServerClient {
     }
     return `\n${diagnostics.join("\n").slice(0, 1200)}`;
   }
+}
+
+type CodexMcpServerStatus = {
+  name: string;
+  tools: string[];
+};
+
+function extractMcpServerStatuses(result: unknown): CodexMcpServerStatus[] {
+  const items = isRecord(result) && Array.isArray(result.data)
+    ? result.data
+    : Array.isArray(result)
+      ? result
+      : [];
+
+  return items.flatMap((item) => {
+    if (!isRecord(item) || typeof item.name !== "string") {
+      return [];
+    }
+    return [
+      {
+        name: item.name,
+        tools: extractMcpToolNames(item.tools)
+      }
+    ];
+  });
+}
+
+function extractMcpStartupStatus(params: unknown): McpStartupStatus | null {
+  if (!isRecord(params) || typeof params.name !== "string" || typeof params.status !== "string") {
+    return null;
+  }
+
+  return {
+    threadId: normalizeOptionalString(params.threadId),
+    name: params.name,
+    status: params.status,
+    error: typeof params.error === "string" ? params.error : null
+  };
+}
+
+function getMcpStartupStatusKey(threadId: string | undefined, name: string): string {
+  return `${threadId ?? ""}:${name}`;
+}
+
+function extractMcpToolNames(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((tool) => {
+    if (typeof tool === "string") {
+      return [tool];
+    }
+    if (isRecord(tool) && typeof tool.name === "string") {
+      return [tool.name];
+    }
+    return [];
+  });
+}
+
+function findReviewerMcpServer(
+  statuses: CodexMcpServerStatus[]
+): CodexMcpServerStatus | null {
+  const byPreferredName = CODEX_REVIEWER_MCP_SERVER_CANDIDATES
+    .map((name) => statuses.find((status) => status.name === name))
+    .find((status): status is CodexMcpServerStatus => Boolean(status));
+
+  if (byPreferredName) {
+    return byPreferredName;
+  }
+
+  return statuses.find(hasReviewerMcpTools) ?? null;
+}
+
+function hasReviewerMcpTools(status: CodexMcpServerStatus): boolean {
+  const tools = new Set(status.tools);
+  return REVIEWER_MCP_TOOL_NAMES.every((toolName) => tools.has(toolName));
+}
+
+function formatMcpPreflightDiagnostic(statuses: CodexMcpServerStatus[]): string {
+  if (statuses.length === 0) {
+    return "No MCP servers were reported by mcpServerStatus/list.";
+  }
+
+  const summary = statuses
+    .map((status) => `${status.name}(${status.tools.length} tools)`)
+    .join(", ");
+  return `Available MCP servers: ${summary}. No known Margent reviewer MCP server was present.`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 let cachedCodexCommand: string | null | undefined;

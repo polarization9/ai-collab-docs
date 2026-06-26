@@ -32,6 +32,7 @@ const ACTIVE_EVENT_STATUSES = new Set<ReviewEventDeliveryStatus>([
   "processing"
 ]);
 const STALE_DELIVERING_EVENT_MS = 120000;
+const STALE_SENT_EVENT_MS = 660000;
 const OPEN_EVENT_STATUSES = new Set<ReviewEventDeliveryStatus>([
   "queued",
   "delivering",
@@ -139,6 +140,14 @@ export async function addAnnotationReply(
 
     annotation.replies.push(reply);
     annotation.updatedAt = now;
+    if (request.resolveAnnotation) {
+      annotation.status = "resolved";
+      annotation.resolvedAt = now;
+      if (request.eventId) {
+        markAnnotationEventHandled(review, annotationId, request.eventId, now);
+      }
+      markOpenAnnotationEventsIgnored(review, annotationId, ["queued"], request.eventId);
+    }
     review.updatedAt = now;
     return saveReviewFile(markdownPath, review);
   });
@@ -359,18 +368,28 @@ export async function recoverStaleDeliveringEvents(markdownPath: string): Promis
     let didChange = false;
 
     for (const event of review.events ?? []) {
+      const eventAge = now - new Date(event.updatedAt).getTime();
       if (
-        event.deliveryStatus !== "delivering" ||
-        event.delivery?.turnId ||
-        now - new Date(event.updatedAt).getTime() < STALE_DELIVERING_EVENT_MS
+        event.deliveryStatus === "delivering" &&
+        !event.delivery?.turnId &&
+        eventAge >= STALE_DELIVERING_EVENT_MS
       ) {
+        event.deliveryStatus = "queued";
+        event.lastError = "Previous delivery attempt did not finish before the App restarted.";
+        event.updatedAt = updatedAt;
+        didChange = true;
         continue;
       }
 
-      event.deliveryStatus = "queued";
-      event.lastError = "Previous delivery attempt did not finish before the App restarted.";
-      event.updatedAt = updatedAt;
-      didChange = true;
+      if (
+        (event.deliveryStatus === "sent" || event.deliveryStatus === "processing") &&
+        eventAge >= STALE_SENT_EVENT_MS
+      ) {
+        event.deliveryStatus = "failed";
+        event.lastError = "Previous Agent delivery did not finish before the timeout window.";
+        event.updatedAt = updatedAt;
+        didChange = true;
+      }
     }
 
     if (!didChange) {

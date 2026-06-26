@@ -12,7 +12,10 @@ import {
 import { parseHeadingLocations, parseHeadings } from "../../../shared/markdownHeadings";
 import type { AgentLinkResponse } from "../../../shared/agentTypes";
 import type {
+  AnnotationStatus,
+  BridgeSendAnnotationResponse,
   ReviewAnchor,
+  ReviewAnnotation,
   ReviewEventDeliveryStatus,
   ReviewFile
 } from "../../../shared/reviewTypes";
@@ -33,7 +36,7 @@ import { scrollToAnnotation } from "../../review/anchorResolve";
 import { useReview } from "../../hooks/useReview";
 import { copyText } from "../../utils/clipboard";
 import { DocumentViewer } from "../DocumentViewer";
-import { useI18n } from "../../i18n";
+import { useI18n, type LocaleKey } from "../../i18n";
 import type {
   MarkdownEditorSelection,
   MarkdownSourceEditorHandle
@@ -41,6 +44,7 @@ import type {
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationSelectionToolbar } from "./AnnotationSelectionToolbar";
 import { AnnotationSidebar } from "./AnnotationSidebar";
+import { AnnotationThreadPopover } from "./AnnotationThreadPopover";
 import {
   DocumentUpdateNotice,
   type DocumentUpdateSource,
@@ -83,6 +87,12 @@ type EditorMergeSnapshot = {
   version: number;
 };
 
+type AnnotationThreadPopoverState = {
+  annotationIds: string[];
+  activeAnnotationId: string;
+  anchorRect: DOMRect;
+};
+
 function hasEditorMergeSnapshotChanged(
   previous: EditorMergeSnapshot,
   current: EditorMergeSnapshot
@@ -99,6 +109,17 @@ function hasAutoReviewPollEvents(review: ReviewFile | null | undefined): boolean
   return Boolean(
     review?.events?.some((event) => AUTO_REVIEW_POLL_STATUSES.has(event.deliveryStatus))
   );
+}
+
+function getThreadAnnotations(
+  annotations: ReviewAnnotation[],
+  annotationIds: string[]
+): ReviewAnnotation[] {
+  const byId = new Map(annotations.map((annotation) => [annotation.id, annotation]));
+  return annotationIds.flatMap((annotationId) => {
+    const annotation = byId.get(annotationId);
+    return annotation ? [annotation] : [];
+  });
 }
 
 export function AnnotationWorkspace({
@@ -138,11 +159,16 @@ export function AnnotationWorkspace({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [agentLink, setAgentLink] = useState<AgentLinkResponse | null>(initialAgentLink);
   const [agentLinkError, setAgentLinkError] = useState<string | null>(null);
-  const didInitializeAgentLinkRef = useRef(false);
+  const [threadPopover, setThreadPopover] = useState<AnnotationThreadPopoverState | null>(null);
+  const [locallyPendingAnnotationIds, setLocallyPendingAnnotationIds] = useState<string[]>([]);
   const review = useReview(document.id, initialReview, document.absolutePath);
   const isDirty = editorDraft !== editorBaseContent;
   const annotations = useMemo(
     () => (review.state.status === "ready" ? review.state.review.annotations : []),
+    [review.state]
+  );
+  const events = useMemo(
+    () => (review.state.status === "ready" ? review.state.review.events ?? [] : []),
     [review.state]
   );
   const hasPendingReviewEvents = useMemo(
@@ -214,11 +240,14 @@ export function AnnotationWorkspace({
 
   const reloadAgentLink = useCallback(async () => {
     try {
-      setAgentLink(await fetchAgentLink(document.absolutePath));
+      const response = await fetchAgentLink(document.absolutePath);
+      setAgentLink(response);
       setAgentLinkError(null);
+      return response;
     } catch (error) {
       setAgentLink(null);
       setAgentLinkError(error instanceof Error ? error.message : t("document.agentStatusFailed"));
+      return null;
     }
   }, [document.absolutePath, t]);
 
@@ -386,13 +415,33 @@ export function AnnotationWorkspace({
   ]);
 
   useEffect(() => {
-    if (didInitializeAgentLinkRef.current) {
+    setAgentLink(initialAgentLink);
+    setAgentLinkError(null);
+    setThreadPopover(null);
+    void reloadAgentLink();
+  }, [document.id, initialAgentLink, reloadAgentLink]);
+
+  useEffect(() => {
+    if (agentLink?.connection.hasTarget) {
       return;
     }
-    didInitializeAgentLinkRef.current = true;
 
-    void reloadAgentLink();
-  }, [reloadAgentLink]);
+    let cancelled = false;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      void reloadAgentLink().then((response) => {
+        if (cancelled || response?.connection.hasTarget || attempts >= 5) {
+          window.clearInterval(timer);
+        }
+      });
+    }, 800);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [agentLink?.connection.hasTarget, document.absolutePath, reloadAgentLink]);
 
   useEffect(() => {
     if (!isSidebarOpen) {
@@ -503,7 +552,11 @@ export function AnnotationWorkspace({
       if (!container) {
         return;
       }
-      setDraft(captureAnnotationDraft(container, document.headings));
+      const nextDraft = captureAnnotationDraft(container, document.headings);
+      setDraft(nextDraft);
+      if (nextDraft) {
+        setIsSidebarOpen(false);
+      }
     }, 0);
   }, [document.headings, isEditing]);
 
@@ -520,9 +573,34 @@ export function AnnotationWorkspace({
     };
   }, [captureSelection, isEditing]);
 
-  const selectAnnotation = (annotationId: string, options: { scroll?: boolean } = {}) => {
-    setIsSidebarOpen(true);
-    void reloadAgentLink();
+  useEffect(() => {
+    if (isEditing) {
+      return;
+    }
+
+    const container = contentRef.current;
+    if (!container) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && container.contains(event.target)) {
+        setIsSidebarOpen(false);
+      }
+    };
+
+    container.addEventListener("pointerdown", handlePointerDown);
+    return () => container.removeEventListener("pointerdown", handlePointerDown);
+  }, [document.id, isEditing]);
+
+  const selectAnnotation = (
+    annotationId: string,
+    options: { scroll?: boolean; openSidebar?: boolean } = {}
+  ) => {
+    if (options.openSidebar !== false) {
+      setIsSidebarOpen(true);
+      void reloadAgentLink();
+    }
     review.setSelectedAnnotationId(annotationId);
     if (options.scroll === false) {
       return;
@@ -704,7 +782,10 @@ export function AnnotationWorkspace({
     });
   };
 
-  const createEditorAnnotation = async (body: string) => {
+  const createEditorAnnotation = async (
+    body: string,
+    options: { sendToAgent?: boolean } = {}
+  ) => {
     if (!editorAnnotationDraft) {
       return;
     }
@@ -728,8 +809,11 @@ export function AnnotationWorkspace({
         setFeedback(t("document.savedWithAnnotation"));
       }
 
-      await review.create({ body, anchor: editorAnnotationDraft.anchor });
+      const created = await review.create({ body, anchor: editorAnnotationDraft.anchor });
       setEditorAnnotationDraft(null);
+      if (options.sendToAgent && created.annotation) {
+        await sendAnnotation(created.annotation.id);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : t("document.annotationFailed");
       if (message.includes("Document was changed outside Margent")) {
@@ -755,6 +839,22 @@ export function AnnotationWorkspace({
     setFeedback(t("document.documentAnnotationAdded"));
   };
 
+  const createReadingAnnotation = async (
+    body: string,
+    options: { sendToAgent?: boolean } = {}
+  ) => {
+    if (!draft) {
+      return;
+    }
+
+    const created = await review.create({ body, anchor: draft.anchor });
+    window.getSelection()?.removeAllRanges();
+    setDraft(null);
+    if (options.sendToAgent && created.annotation) {
+      await sendAnnotation(created.annotation.id);
+    }
+  };
+
   const toggleAutoMonitor = async (enabled: boolean) => {
     if (enabled && !agentLink?.connection.hasTarget) {
       setFeedback(t("toast.needAgentBinding"));
@@ -775,33 +875,90 @@ export function AnnotationWorkspace({
     }
   };
 
-  const copySuccessorConnectionInstruction = async () => {
+  const copyAgentConnectionInstruction = async (successMessage: string) => {
     try {
       const response = await createAgentSuccessorInstruction(
         document.absolutePath,
         agentLink?.connection.provider ?? "codex"
       );
       await copyText(response.instruction);
-      setFeedback(t("toast.copyReconnect"));
+      setFeedback(successMessage);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : t("document.copyInstructionFailed"));
     }
   };
 
+  const copySuccessorConnectionInstruction = async () => {
+    await copyAgentConnectionInstruction(t("toast.copyReconnect"));
+  };
+
+  const handleUnavailableAgentSend = async () => {
+    await copyAgentConnectionInstruction(t("annotation.agentInstructionCopied"));
+  };
+
   const sendAnnotation = async (annotationId: string) => {
-    const response = await sendAnnotationToAgent(annotationId, document.absolutePath);
-    review.replaceReview(response.review);
-    if (response.needsBinding) {
-      setFeedback(t("toast.needAgentBinding"));
-      return;
+    setLocallyPendingAnnotationIds((current) =>
+      current.includes(annotationId) ? current : [...current, annotationId]
+    );
+    setFeedback(t("toast.agentSending"));
+    try {
+      const response = await sendAnnotationToAgent(annotationId, document.absolutePath);
+      review.replaceReview(response.review);
+      setFeedback(getAgentDeliveryFeedback(response, false, t));
+    } finally {
+      setLocallyPendingAnnotationIds((current) =>
+        current.filter((pendingAnnotationId) => pendingAnnotationId !== annotationId)
+      );
     }
-    setFeedback(response.ok ? t("toast.agentQueued") : t("toast.agentFailed"));
   };
 
   const retryEvent = async (eventId: string) => {
-    const response = await retryReviewEvent(eventId, document.absolutePath);
-    review.replaceReview(response.review);
-    setFeedback(response.ok ? t("toast.agentRetryQueued") : t("toast.agentRetryFailed"));
+    const annotationId = events.find((event) => event.id === eventId)?.annotationId;
+    if (annotationId) {
+      setLocallyPendingAnnotationIds((current) =>
+        current.includes(annotationId) ? current : [...current, annotationId]
+      );
+    }
+    setFeedback(t("toast.agentRetrySending"));
+    try {
+      const response = await retryReviewEvent(eventId, document.absolutePath);
+      review.replaceReview(response.review);
+      setFeedback(getAgentDeliveryFeedback(response, true, t));
+    } finally {
+      if (annotationId) {
+        setLocallyPendingAnnotationIds((current) =>
+          current.filter((pendingAnnotationId) => pendingAnnotationId !== annotationId)
+        );
+      }
+    }
+  };
+
+  const replyToAnnotation = async (annotationId: string, body: string) => {
+    await review.reply(annotationId, {
+      body,
+      author: { type: "user", name: "User" }
+    });
+  };
+
+  const resolveAnnotationStatus = async (
+    annotationId: string,
+    status: AnnotationStatus,
+    eventId?: string
+  ) => {
+    await review.setStatus(annotationId, status, eventId);
+  };
+
+  const openAnnotationThread = (input: AnnotationThreadPopoverState) => {
+    setIsSidebarOpen(false);
+    setThreadPopover(input);
+    selectAnnotation(input.activeAnnotationId, { scroll: false, openSidebar: false });
+  };
+
+  const switchAnnotationThread = (annotationId: string) => {
+    setThreadPopover((current) =>
+      current ? { ...current, activeAnnotationId: annotationId } : current
+    );
+    selectAnnotation(annotationId, { scroll: false, openSidebar: false });
   };
 
   const toggleAnnotationSidebar = () => {
@@ -816,6 +973,24 @@ export function AnnotationWorkspace({
     void review.reload();
     void reloadAgentLink();
   };
+
+  useEffect(() => {
+    setThreadPopover(null);
+    setLocallyPendingAnnotationIds([]);
+  }, [document.id, isEditing]);
+
+  useEffect(() => {
+    if (!threadPopover) {
+      return;
+    }
+
+    const hasActiveAnnotation = annotations.some(
+      (annotation) => annotation.id === threadPopover.activeAnnotationId
+    );
+    if (!hasActiveAnnotation) {
+      setThreadPopover(null);
+    }
+  }, [annotations, threadPopover]);
 
   const applyAvailableDocumentUpdate = () => {
     const source =
@@ -981,6 +1156,8 @@ export function AnnotationWorkspace({
               draft={editorAnnotationDraft}
               onCancel={() => setEditorAnnotationDraft(null)}
               onCreate={createEditorAnnotation}
+              canSendToAgent={Boolean(agentLink?.connection.hasTarget)}
+              onSendWithoutAgent={handleUnavailableAgentSend}
             />
           </section>
         ) : (
@@ -988,30 +1165,45 @@ export function AnnotationWorkspace({
             <DocumentViewer document={document} />
             <AnnotationLayer
               annotations={annotations}
+              events={events}
+              pendingAnnotationIds={locallyPendingAnnotationIds}
               containerRef={contentRef}
               selectedAnnotationId={review.selectedAnnotationId}
               onSelect={selectAnnotation}
+              onOpenThread={openAnnotationThread}
             />
             <AnnotationSelectionToolbar
               draft={draft}
               trackSelection
               onCancel={() => setDraft(null)}
-              onCreate={async (body) => {
-                if (!draft) {
-                  return;
-                }
-                await review.create({ body, anchor: draft.anchor });
-                window.getSelection()?.removeAllRanges();
-                setDraft(null);
-              }}
+              onCreate={createReadingAnnotation}
+              canSendToAgent={Boolean(agentLink?.connection.hasTarget)}
+              onSendWithoutAgent={handleUnavailableAgentSend}
             />
+            {threadPopover ? (
+              <AnnotationThreadPopover
+                annotations={getThreadAnnotations(annotations, threadPopover.annotationIds)}
+                events={events}
+                pendingAnnotationIds={locallyPendingAnnotationIds}
+                activeAnnotationId={threadPopover.activeAnnotationId}
+                anchorRect={threadPopover.anchorRect}
+                agentLink={agentLink}
+                onClose={() => setThreadPopover(null)}
+                onSwitch={switchAnnotationThread}
+                onReply={replyToAnnotation}
+                onSendToAgent={sendAnnotation}
+                onRetryReviewEvent={retryEvent}
+                onUnavailableAgentSend={handleUnavailableAgentSend}
+              />
+            ) : null}
           </section>
         )}
       </div>
       {isSidebarOpen ? (
         <AnnotationSidebar
           annotations={annotations}
-          events={review.state.status === "ready" ? review.state.review.events ?? [] : []}
+          events={events}
+          pendingAnnotationIds={locallyPendingAnnotationIds}
           agentLink={agentLink}
           agentLinkError={agentLinkError}
           selectedAnnotationId={review.selectedAnnotationId}
@@ -1061,6 +1253,28 @@ function captureReadingSwitchAnchor(container: HTMLElement | null): SwitchAnchor
     headingId: block.dataset.reviewHeadingId || null,
     headingText: block.dataset.reviewHeadingText || null
   };
+}
+
+function getAgentDeliveryFeedback(
+  response: BridgeSendAnnotationResponse,
+  isRetry: boolean,
+  t: (key: LocaleKey) => string
+): string {
+  if (response.needsBinding) {
+    return t("toast.needAgentBinding");
+  }
+  if (!response.ok) {
+    return isRetry ? t("toast.agentRetryFailed") : t("toast.agentFailed");
+  }
+
+  const status = response.event?.deliveryStatus;
+  if (status === "handled") {
+    return t("toast.agentDone");
+  }
+  if (status && AUTO_REVIEW_POLL_STATUSES.has(status)) {
+    return isRetry ? t("toast.agentRetryProcessing") : t("toast.agentProcessing");
+  }
+  return isRetry ? t("toast.agentRetryQueued") : t("toast.agentQueued");
 }
 
 function captureReadingSelectionSwitchAnchor(container: HTMLElement): SwitchAnchor | null {

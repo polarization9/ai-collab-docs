@@ -1,12 +1,14 @@
-import { MessageSquare, X } from "lucide-react";
+import { AtSign, MessageSquare, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AnnotationDraft } from "../../review/anchorCapture";
 import { useI18n } from "../../i18n";
 
 type AnnotationSelectionToolbarProps = {
   draft: AnnotationDraft | null;
-  onCreate: (body: string) => Promise<void>;
+  onCreate: (body: string, options?: { sendToAgent?: boolean }) => Promise<void>;
   onCancel: () => void;
+  canSendToAgent?: boolean;
+  onSendWithoutAgent?: () => Promise<void>;
   trackSelection?: boolean;
 };
 
@@ -14,6 +16,8 @@ export function AnnotationSelectionToolbar({
   draft,
   onCreate,
   onCancel,
+  canSendToAgent = false,
+  onSendWithoutAgent,
   trackSelection = false
 }: AnnotationSelectionToolbarProps) {
   const { t } = useI18n();
@@ -83,14 +87,23 @@ export function AnnotationSelectionToolbar({
     viewportPadding
   );
 
-  const submit = async () => {
-    if (!body.trim() || isSaving) {
+  const submit = async (sendToAgent = false) => {
+    if (isSaving) {
+      return;
+    }
+
+    if (sendToAgent && !canSendToAgent) {
+      await onSendWithoutAgent?.();
+      return;
+    }
+
+    if (!body.trim()) {
       return;
     }
 
     setIsSaving(true);
     try {
-      await onCreate(body.trim());
+      await onCreate(body.trim(), { sendToAgent });
       setBody("");
       setIsComposerOpen(false);
     } finally {
@@ -141,11 +154,21 @@ export function AnnotationSelectionToolbar({
         autoFocus
       />
       <div className="annotation-composer-actions">
-        <button type="button" onClick={onCancel}>
-          {t("annotation.cancel")}
+        <button type="button" disabled={isSaving || !body.trim()} onClick={() => void submit(false)}>
+          {t("annotation.save")}
         </button>
-        <button type="button" disabled={!body.trim() || isSaving} onClick={submit}>
-          {isSaving ? t("annotation.saving") : t("annotation.save")}
+        <button
+          type="button"
+          className={`annotation-composer-agent-button${
+            canSendToAgent ? "" : " annotation-composer-agent-button-unavailable"
+          }`}
+          disabled={isSaving || (canSendToAgent && !body.trim())}
+          aria-disabled={!canSendToAgent}
+          title={canSendToAgent ? t("annotation.sendToAgent") : t("annotation.agentUnavailable")}
+          onClick={() => void submit(true)}
+        >
+          <AtSign size={13} />
+          {isSaving ? t("annotation.saving") : t("annotation.sendToAgent")}
         </button>
       </div>
     </div>

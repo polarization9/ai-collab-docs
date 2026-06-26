@@ -60,10 +60,10 @@ Codex 需要把 Margent MCP server 注册到本机 Codex 配置中。安装 `Mar
 cp ~/.codex/config.toml ~/.codex/config.toml.bak-margent-$(date +%Y%m%d%H%M%S)
 ```
 
-如果已有 `[mcp_servers.margent]`，更新它；如果没有，新增：
+如果已有 `[mcp_servers.prd_reviewer]`，更新它；如果没有，新增：
 
 ```toml
-[mcp_servers.margent]
+[mcp_servers.prd_reviewer]
 command = "/Applications/Margent.app/Contents/Resources/resources/node/bin/node"
 args = [
   "/Applications/Margent.app/Contents/Resources/_up_/dist/desktop/mcpCli.js"
@@ -84,6 +84,8 @@ args = [
 不要在全局 MCP 配置里追加某个具体 Markdown 文档路径。Margent MCP 工具可以通过 `documentPath` 参数处理具体文档，后续绑定当前文档时再建立文档和 Codex 会话的关系。
 
 Codex 修改配置时必须保留用户已有的其他 `mcp_servers`、`projects`、`plugins` 和设置，不要重写整个 `config.toml`。
+
+不要使用 `command = "node"` 这种依赖 shell `PATH` 的配置。Margent 从 macOS GUI 启动时，后台投递通道继承的是 App 环境，不一定能找到 Homebrew / nvm 的 `node`，会导致 Codex 后台报 `No such file or directory (os error 2)`。
 
 ### 2.3 验证 MCP CLI 可以启动
 
