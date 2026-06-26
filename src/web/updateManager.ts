@@ -119,8 +119,24 @@ export async function relaunchApp(): Promise<void> {
 }
 
 function formatUpdateError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
+  const message = error instanceof Error ? error.message : String(error || "Unable to check for updates.");
+
+  if (isUpdateNetworkError(message)) {
+    return "无法连接 GitHub 更新服务器，请检查网络或代理设置。";
   }
-  return String(error || "Unable to check for updates.");
+
+  return message;
+}
+
+function isUpdateNetworkError(message: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  return [
+    "error sending request",
+    "failed to fetch",
+    "request timed out",
+    "operation timed out",
+    "could not resolve",
+    "connection refused",
+    "network error"
+  ].some((keyword) => normalizedMessage.includes(keyword));
 }
