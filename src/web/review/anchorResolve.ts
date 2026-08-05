@@ -207,14 +207,35 @@ type DomCandidate = {
 
 function findDomCandidates(anchor: ReviewAnchor, container: HTMLElement): DomCandidate[] {
   const blocks = Array.from(container.querySelectorAll<HTMLElement>("[data-review-block-id]"));
-  const scopedBlocks = getHeadingScopedBlocks(blocks, anchor);
-  const searchBlocks = scopedBlocks.length > 0 ? scopedBlocks : blocks;
   const texts = getAnchorTexts(anchor);
+  const idScopedBlocks = anchor.headingId
+    ? blocks.filter((block) => block.dataset.reviewHeadingId === anchor.headingId)
+    : [];
+  const idScopedCandidates = collectDomCandidates(idScopedBlocks, texts);
+  if (idScopedCandidates.length > 0) {
+    return idScopedCandidates;
+  }
+
+  const textScopedBlocks = anchor.headingText
+    ? blocks.filter((block) => block.dataset.reviewHeadingText === anchor.headingText)
+    : [];
+  const textScopedCandidates = collectDomCandidates(textScopedBlocks, texts);
+  if (textScopedCandidates.length > 0) {
+    return textScopedCandidates;
+  }
+
+  return collectDomCandidates(blocks, texts);
+}
+
+function collectDomCandidates(
+  blocks: HTMLElement[],
+  texts: Array<{ value: string; source: "selected" | "original" }>
+): DomCandidate[] {
   const candidates: DomCandidate[] = [];
   const seen = new Set<string>();
 
   for (const text of texts) {
-    for (const block of searchBlocks) {
+    for (const block of blocks) {
       const range = createRangeFromTextCandidates(block, text.value);
       if (!range) {
         continue;
@@ -231,10 +252,6 @@ function findDomCandidates(anchor: ReviewAnchor, container: HTMLElement): DomCan
         score: 0
       });
     }
-  }
-
-  if (scopedBlocks.length > 0) {
-    return candidates;
   }
 
   return candidates;
@@ -280,17 +297,6 @@ function scoreDomCandidates(candidates: DomCandidate[], anchor: ReviewAnchor): D
       return { ...candidate, score };
     })
     .sort((left, right) => right.score - left.score);
-}
-
-function getHeadingScopedBlocks(blocks: HTMLElement[], anchor: ReviewAnchor): HTMLElement[] {
-  if (!anchor.headingId && !anchor.headingText) {
-    return [];
-  }
-  return blocks.filter(
-    (block) =>
-      (anchor.headingId && block.dataset.reviewHeadingId === anchor.headingId) ||
-      (anchor.headingText && block.dataset.reviewHeadingText === anchor.headingText)
-  );
 }
 
 function getAnchorTexts(anchor: ReviewAnchor): Array<{ value: string; source: "selected" | "original" }> {

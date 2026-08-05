@@ -1513,7 +1513,11 @@ select {
 }
 
 .document-heading {
-  scroll-margin-top: 28px;
+  scroll-margin-top: 70px;
+}
+
+:root[data-runtime="desktop"] .document-heading {
+  scroll-margin-top: 56px;
 }
 
 .document-content h1,
@@ -1552,10 +1556,17 @@ select {
 .document-content p,
 .document-content li {
   font-size: 16px;
+  white-space: pre-line;
 }
 
 .document-content p {
   margin: 14px 0;
+}
+
+.document-content .markdown-extra-blank-line {
+  height: 1.72em;
+  pointer-events: none;
+  user-select: none;
 }
 
 .document-content a {
@@ -4806,6 +4817,10 @@ body.table-column-resizing {
 
   .document-content h2 {
     font-size: 24px;
+  }
+
+  .document-heading {
+    scroll-margin-top: 66px;
   }
 
   .review-layout {

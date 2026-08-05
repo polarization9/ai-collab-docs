@@ -9,7 +9,7 @@ import {
   useRef,
   useState
 } from "react";
-import { parseHeadingLocations, parseHeadings } from "../../../shared/markdownHeadings";
+import { findHeadingLocation, parseHeadings } from "../../../shared/markdownHeadings";
 import type { AgentLinkResponse } from "../../../shared/agentTypes";
 import type {
   AnnotationStatus,
@@ -699,20 +699,21 @@ export function AnnotationWorkspace({
     t
   ]);
 
-  useLayoutEffect(() => {
-    if (!isEditing) {
-      return;
-    }
-
+  const scrollToPendingEditorAnchor = useCallback(() => {
     const anchor = pendingEditorAnchorRef.current;
-    if (!anchor) {
+    const editor = editorRef.current;
+    if (!isEditing || !anchor || !editor) {
       return;
     }
 
-    pendingEditorAnchorRef.current = null;
     const offset = resolveMarkdownOffset(document.content, anchor);
-    editorRef.current?.scrollToOffset(offset);
+    editor.scrollToOffset(offset);
+    pendingEditorAnchorRef.current = null;
   }, [document.content, isEditing]);
+
+  useLayoutEffect(() => {
+    scrollToPendingEditorAnchor();
+  }, [scrollToPendingEditorAnchor]);
 
   useLayoutEffect(() => {
     if (isEditing) {
@@ -1150,6 +1151,7 @@ export function AnnotationWorkspace({
                 value={editorDraft}
                 onChange={setEditorDraft}
                 onTextSelection={captureEditorSelection}
+                onReady={scrollToPendingEditorAnchor}
               />
             </Suspense>
             <AnnotationSelectionToolbar
@@ -1465,9 +1467,7 @@ function getHeadingOffset(markdown: string, anchor: SwitchAnchor): number {
     return 0;
   }
 
-  const heading = parseHeadingLocations(markdown).find(
-    (item) => item.id === anchor.headingId || item.text === anchor.headingText
-  );
+  const heading = findHeadingLocation(markdown, anchor);
   return heading?.offset ?? 0;
 }
 

@@ -20,6 +20,7 @@ import {
 } from "../../shared/markdownBlocks";
 import type { Heading, HeadingLevel, ReviewDocument } from "../../shared/types";
 import { fetchDocumentAssetObjectUrl } from "../api";
+import { remarkPreserveExtraBlankLines } from "../markdown/remarkPreserveExtraBlankLines";
 import { CodeBlock } from "./CodeBlock";
 import { ResizableTable } from "./ResizableTable";
 
@@ -189,7 +190,10 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
 
   return (
     <article className="document-content">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkPreserveExtraBlankLines]}
+        components={components}
+      >
         {document.content}
       </ReactMarkdown>
     </article>
@@ -211,7 +215,8 @@ function takeCanonicalBlock(
     (block, index) =>
       index > cursor &&
       block.kind === kind &&
-      (!heading || block.headingId === heading.id || block.headingText === heading.text)
+      (!heading ||
+        (block.headingId ? block.headingId === heading.id : block.headingText === heading.text))
   );
   return nextIndex >= 0 ? blocks[nextIndex] : current;
 }

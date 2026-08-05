@@ -7,6 +7,11 @@ export type HeadingLocation = Heading & {
   lineText: string;
 };
 
+export type HeadingReference = {
+  headingId: string | null;
+  headingText: string | null;
+};
+
 type FenceState = {
   marker: "`" | "~";
   length: number;
@@ -79,6 +84,26 @@ export function parseHeadingLocations(markdown: string): HeadingLocation[] {
   }
 
   return headings;
+}
+
+export function findHeadingLocation(
+  markdown: string,
+  reference: HeadingReference
+): HeadingLocation | null {
+  const headings = parseHeadingLocations(markdown);
+  if (reference.headingId) {
+    const idMatch = headings.find((heading) => heading.id === reference.headingId);
+    if (idMatch) {
+      return idMatch;
+    }
+  }
+
+  if (!reference.headingText) {
+    return null;
+  }
+
+  const textMatches = headings.filter((heading) => heading.text === reference.headingText);
+  return textMatches.length === 1 ? textMatches[0] : null;
 }
 
 export function normalizeHeadingText(raw: string): string {

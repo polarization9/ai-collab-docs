@@ -20,6 +20,7 @@ type MarkdownSourceEditorProps = {
   value: string;
   onChange: (value: string) => void;
   onTextSelection?: (selection: MarkdownEditorSelection | null) => void;
+  onReady?: () => void;
   readOnly?: boolean;
 };
 
@@ -29,6 +30,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, Markd
       value,
       onChange,
       onTextSelection,
+      onReady,
       readOnly = false
     }: MarkdownSourceEditorProps,
     ref
@@ -37,6 +39,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, Markd
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onTextSelectionRef = useRef(onTextSelection);
+  const onReadyRef = useRef(onReady);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -45,6 +48,10 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, Markd
   useEffect(() => {
     onTextSelectionRef.current = onTextSelection;
   }, [onTextSelection]);
+
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
 
   useImperativeHandle(ref, () => ({
     getTopVisibleAnchor() {
@@ -100,6 +107,23 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, Markd
           yMargin: 72
         })
       });
+
+      window.requestAnimationFrame(() => {
+        if (viewRef.current !== view) {
+          return;
+        }
+        const coordinates = view.coordsAtPos(position);
+        if (!coordinates) {
+          return;
+        }
+        const tabsBottom = document
+          .querySelector<HTMLElement>(".document-tabs")
+          ?.getBoundingClientRect().bottom ?? 0;
+        window.scrollBy({
+          top: coordinates.top - (tabsBottom + 14),
+          behavior: "auto"
+        });
+      });
     }
   }), []);
 
@@ -129,6 +153,7 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorHandle, Markd
     });
 
     viewRef.current = view;
+    onReadyRef.current?.();
 
     return () => {
       view.destroy();
