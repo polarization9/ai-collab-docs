@@ -1,8 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CodexDesktopClient, cleanCodexDiagnostic } from "./codexDesktopBridge.js";
 import type {
   AgentProvider,
   AgentSessionReference,
@@ -25,17 +27,23 @@ import {
   recoverStaleDeliveringEvents,
   updateReviewEvent
 } from "./review.js";
+import {
+  getDeepSeekHarnessSessionState,
+  resolveDeepSeekHarnessEndpoint,
+  sendDeepSeekHarnessPrompt
+} from "./deepSeekHarnessBridge.js";
 
 type SendToAgentInput = {
   provider: AgentProvider;
   sessionId?: string;
   cwd?: string;
+  endpoint?: string;
   documentPath: string;
   annotationId: string;
   eventId: string;
   targetRole?: AgentSessionRole;
   prompt: string;
-  createPrompt?: (options?: { reviewerMcpServerName?: string }) => string;
+  createPrompt?: (options?: { reviewerMcpServerName?: string; codexTransport?: "desktop" }) => string;
   onTurnStarted?: (delivery: {
     provider: AgentProvider;
     sessionId?: string;
@@ -72,7 +80,7 @@ const REVIEWER_MCP_TOOL_NAMES = [
   "reviewer_update_annotation_status",
   "reviewer_mark_review_event_handled"
 ];
-const CODEX_REVIEWER_MCP_SERVER_CANDIDATES = ["prd_reviewer", "margent"];
+const CODEX_REVIEWER_MCP_SERVER_CANDIDATES = ["margent", "prd_reviewer"];
 const MARGENT_MCP_ALLOWED_TOOLS = [
   "mcp__margent__reviewer_get_annotation_context",
   "mcp__margent__reviewer_add_annotation_reply",
@@ -87,7 +95,8 @@ const MARGENT_MCP_ALLOWED_TOOLS = [
 const bridgeAdapters: AgentBridgeAdapter[] = [
   createCodexAppServerAdapter(),
   createClaudeCodeCliAdapter(),
-  createWorkBuddyCliAdapter()
+  createWorkBuddyCliAdapter(),
+  createDeepSeekHarnessAdapter()
 ];
 
 const OPEN_EVENT_STATUSES = new Set<ReviewEvent["deliveryStatus"]>([
@@ -248,16 +257,18 @@ export async function dispatchReviewEvents(
     targetRole: target.role,
     triggerReplyId: queuedEvent.triggerReplyId
   };
-  const createPrompt = (options?: { reviewerMcpServerName?: string }) =>
+  const createPrompt = (options?: { reviewerMcpServerName?: string; codexTransport?: "desktop" }) =>
     createBridgePrompt({
       ...promptInput,
-      reviewerMcpServerName: options?.reviewerMcpServerName
+      reviewerMcpServerName: options?.reviewerMcpServerName,
+      codexTransport: options?.codexTransport
     });
   const prompt = createPrompt();
   const result = await adapter.send({
     provider: target.provider,
     sessionId: target.sessionId,
     cwd: target.cwd,
+    endpoint: target.endpoint,
     documentPath: markdownPath,
     annotationId: queuedEvent.annotationId,
     eventId: queuedEvent.id,
@@ -267,8 +278,8 @@ export async function dispatchReviewEvents(
     onTurnStarted: async ({ provider, sessionId, turnId, deliveryId }) => {
       const now = new Date().toISOString();
       const latestReview = await loadReviewFile(markdownPath);
-      const latestEvent = getEventFromReview(latestReview, queuedEvent.id);
-      if (latestEvent.deliveryStatus !== "delivering") {
+      const latestEvent = latestReview.events?.find(event => event.id === queuedEvent.id);
+      if (latestEvent?.deliveryStatus !== "delivering") {
         return;
       }
 
@@ -296,6 +307,11 @@ export async function dispatchReviewEvents(
   });
 
   if (!result.ok) {
+    const currentReview = await loadReviewFile(markdownPath);
+    const currentEvent = currentReview.events?.find((event) => event.id === queuedEvent.id);
+    if (!currentEvent || currentEvent.deliveryStatus === "ignored") {
+      return { ok: true, event: currentEvent, review: currentReview };
+    }
     const completedReview = await markEventHandledIfReviewChanged(markdownPath, queuedEvent.id);
     if (completedReview) {
       return {
@@ -319,7 +335,10 @@ export async function dispatchReviewEvents(
 
   const now = new Date().toISOString();
   const latestReview = await loadReviewFile(markdownPath);
-  const latestEvent = getEventFromReview(latestReview, queuedEvent.id);
+  const latestEvent = latestReview.events?.find(event => event.id === queuedEvent.id);
+  if (!latestEvent || latestEvent.deliveryStatus === "ignored") {
+    return { ok: true, event: latestEvent, review: latestReview };
+  }
   const nextStatus =
     latestEvent.deliveryStatus === "delivering" ? "sent" : latestEvent.deliveryStatus;
 
@@ -458,12 +477,13 @@ export function createBridgePrompt(input: {
   targetRole?: AgentSessionRole;
   triggerReplyId?: string;
   reviewerMcpServerName?: string;
+  codexTransport?: "desktop";
 }): string {
   const isFollowup = Boolean(input.triggerReplyId);
   const toolNames = getReviewerPromptToolNames(input.provider, input.reviewerMcpServerName);
   const codexToolPrefix = input.reviewerMcpServerName
     ? `mcp__${input.reviewerMcpServerName}__reviewer_`
-    : "mcp__prd_reviewer__reviewer_";
+    : "mcp__margent__reviewer_";
   const contextCall = [
     `   ${toolNames.getContext}({`,
     `     documentPath: ${JSON.stringify(input.documentPath)},`,
@@ -504,11 +524,11 @@ export function createBridgePrompt(input: {
     "",
     "请按以下步骤处理：",
     "",
-    ...(input.provider === "codex"
+    ...(input.provider === "codex" && input.codexTransport !== "desktop"
       ? [
           "0. Codex 后台通道必须直接调用 Margent MCP 的精确工具名，不要调用裸工具名，也不要依赖 tool_search：",
           `   - 本轮工具名前缀是 ${codexToolPrefix}。`,
-          "   - 如果本会话工具列表里显示的 server 名不是 prd_reviewer，请改用实际 server 名对应的 mcp__<server>__reviewer_ 前缀。"
+          "   - 正式 server 名是 margent；如果当前会话仍加载旧名称，请使用实际 server 名对应的 mcp__<server>__reviewer_ 前缀。"
         ]
       : [
           "0. 如果当前工具列表里没有 Margent / reviewer 相关工具，先用工具发现能力搜索：",
@@ -590,7 +610,10 @@ function getReviewerPromptToolNames(provider: AgentProvider, reviewerMcpServerNa
   updateAnnotationStatus: string;
   markEventHandled: string;
 } {
-  const prefix = provider === "codex" ? `mcp__${reviewerMcpServerName ?? "prd_reviewer"}__` : "";
+  const prefix =
+    provider === "codex" || provider === "deepseek-harness"
+      ? `mcp__${reviewerMcpServerName ?? "margent"}__`
+      : "";
   return {
     getContext: `${prefix}reviewer_get_annotation_context`,
     addAnnotationReply: `${prefix}reviewer_add_annotation_reply`,
@@ -637,6 +660,19 @@ function appendWorkBuddyPromptInstructions(prompt: string): string {
     "- 不存在 mcp__margent__get_annotation，也不存在 mcp__margent__resolve_annotation。",
     "- 文档修改必须通过 mcp__margent__reviewer_apply_document_edit 完成，不要绕过 Margent 直接使用内置文件编辑工具。",
     "- 如果不能真实调用 Margent MCP 工具，请直接说明 MCP 不可用，不要假装处理完成。"
+  ].join("\n");
+}
+
+function appendDeepSeekHarnessPromptInstructions(prompt: string): string {
+  return [
+    prompt,
+    "",
+    "DeepSeek Harness 额外说明：",
+    "- 这是追加到当前 DeepSeek Harness session 的后台任务，不要创建新会话。",
+    "- 后台处理时不要输出中间说明，直接读取批注并通过 Margent MCP 写回结果。",
+    "- 优先直接调用 mcp__margent__reviewer_* 工具。",
+    "- 如果当前 profile 只通过 mcporter 暴露 MCP，请用 bash 调用 margent.reviewer_* 对应工具；普通文本里的伪工具调用不算完成。",
+    "- 文档修改必须通过 reviewer_apply_document_edit 完成；无法调用 Margent MCP 时明确说明，不要假装已经处理。"
   ].join("\n");
 }
 
@@ -1041,11 +1077,18 @@ export async function resolveEventTarget(
       (!event.targetAgent.sessionId || currentTarget.sessionId === event.targetAgent.sessionId)
         ? currentTarget.cwd
         : undefined;
+    const currentEndpoint =
+      currentTarget?.provider === event.targetAgent.provider &&
+      currentTarget.role === event.targetAgent.role &&
+      (!event.targetAgent.sessionId || currentTarget.sessionId === event.targetAgent.sessionId)
+        ? currentTarget.endpoint
+        : undefined;
     return {
       provider: event.targetAgent.provider,
       role: event.targetAgent.role,
       sessionId: event.targetAgent.sessionId,
       cwd: event.targetAgent.cwd ?? currentCwd,
+      endpoint: currentEndpoint ?? event.targetAgent.endpoint,
       displayName: event.targetAgent.displayName,
       configuredAt: event.targetAgent.configuredAt,
       configuredBy: event.targetAgent.configuredBy,
@@ -1099,6 +1142,9 @@ async function selectBridgeAdapter(provider: AgentProvider): Promise<AgentBridge
 }
 
 function getUnavailableBridgeAdapterError(provider: AgentProvider): string {
+  if (provider === "deepseek-harness") {
+    return "DeepSeek Harness delivery is unavailable. Keep `dsh web` running and reconnect this document.";
+  }
   if (provider === "workbuddy") {
     return "WorkBuddy CLI is not available. Open WorkBuddy once, install its CodeBuddy CLI, or set WORKBUDDY_CLI_PATH / CODEBUDDY_CLI_PATH.";
   }
@@ -1117,7 +1163,8 @@ function requiresMcpHandledCompletion(
   return (
     adapterName === "codex-app-server" ||
     adapterName === "claude-code-cli" ||
-    adapterName === "workbuddy-codebuddy-cli"
+    adapterName === "workbuddy-codebuddy-cli" ||
+    adapterName === "deepseek-harness-web"
   );
 }
 
@@ -1129,6 +1176,9 @@ function getBridgeAdapterDisplayName(
   }
   if (adapterName === "workbuddy-codebuddy-cli") {
     return "WorkBuddy";
+  }
+  if (adapterName === "deepseek-harness-web") {
+    return "DeepSeek Harness";
   }
   if (adapterName === "codex-app-server") {
     return "Codex";
@@ -1163,29 +1213,49 @@ function createCodexAppServerAdapter(): AgentBridgeAdapter {
       }
 
       const client = new CodexAppServerClient(command, input.cwd);
+      let desktop: CodexDesktopClient | null = null;
       try {
+        desktop = await CodexDesktopClient.findOwner(input.sessionId);
+        if (desktop) {
+          await desktop.observe(input.sessionId);
+          const previousEvent = await getReviewEvent(input.documentPath, input.eventId);
+          const previousTurnId = previousEvent.delivery?.deliveryId?.startsWith("codex-desktop:")
+            ? previousEvent.delivery.turnId : undefined;
+          const previousTurn = previousTurnId
+            ? desktop.getTurn(previousTurnId)
+            : undefined;
+          if (previousTurn?.status === "inProgress") {
+            const deliveryId = `codex-desktop:${previousTurnId}`;
+            await input.onTurnStarted?.({ provider: "codex", sessionId: input.sessionId, turnId: previousTurnId, deliveryId });
+            await waitForCodexDesktopTurn(desktop, input, previousTurnId!);
+            return { ok: true, provider: "codex", sessionId: input.sessionId, turnId: previousTurnId, deliveryId };
+          }
+          const canStart = await waitForCodexDesktopIdle(desktop, input);
+          if (!canStart) return { ok: true, provider: "codex", sessionId: input.sessionId };
+          const prompt = input.createPrompt?.({ codexTransport: "desktop" }) ?? input.prompt;
+          const turnId = await desktop.startTurn(input.sessionId, [prompt, "",
+            "这是当前桌面会话中的 Margent 批注任务。请使用当前会话实际可用的工具发现机制查找 reviewer 工具。",
+            "后台处理时不要输出中间说明，直接调用 MCP 工具；完成后最多输出一句简短结果。"
+          ].join("\n"), randomUUID());
+          const deliveryId = `codex-desktop:${turnId}`;
+          await input.onTurnStarted?.({ provider: "codex", sessionId: input.sessionId, turnId, deliveryId });
+          await waitForCodexDesktopTurn(desktop, input, turnId);
+          return { ok: true, provider: "codex", sessionId: input.sessionId, turnId, deliveryId };
+        }
+
         await client.start();
         await client.request("initialize", {
-          clientInfo: {
-            name: "margent",
-            title: "Margent",
-            version: "0.1.0"
-          },
+          clientInfo: { name: "margent", title: "Margent", version: "0.1.0" },
           capabilities: {
             experimentalApi: true,
             requestAttestation: false,
             optOutNotificationMethods: [
-              "command/exec/outputDelta",
-              "item/agentMessage/delta",
-              "item/plan/delta",
-              "item/fileChange/outputDelta",
-              "item/reasoning/summaryTextDelta",
-              "item/reasoning/textDelta"
+              "command/exec/outputDelta", "item/agentMessage/delta", "item/plan/delta",
+              "item/fileChange/outputDelta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta"
             ]
           }
         });
         client.notify("initialized");
-
         const resumeResult = await client.request("thread/resume", {
           threadId: input.sessionId
         });
@@ -1236,10 +1306,48 @@ function createCodexAppServerAdapter(): AgentBridgeAdapter {
             : client.formatError(error)
         };
       } finally {
+        desktop?.close();
         client.close();
       }
     }
   };
+}
+
+async function waitForCodexDesktopIdle(client: CodexDesktopClient, input: SendToAgentInput): Promise<boolean> {
+  const deadline = Date.now() + APP_SERVER_TURN_TIMEOUT_MS;
+  let refreshedAt = Date.now();
+  while (Date.now() < deadline) {
+    const review = await loadReviewFile(input.documentPath);
+    const event = review.events?.find((item) => item.id === input.eventId);
+    if (!event || event.deliveryStatus === "ignored" || event.deliveryStatus === "handled") return false;
+    if (!client.isBusy()) return true;
+    // Keep a live waiting attempt from being recovered as a crashed delivery.
+    if (Date.now() - refreshedAt >= 30_000) {
+      await updateReviewEvent(input.documentPath, input.eventId, { deliveryStatus: "delivering" });
+      refreshedAt = Date.now();
+    }
+    await sleep(1_000);
+  }
+  throw new Error("Codex is still busy with another task. Retry after the current task finishes.");
+}
+
+async function waitForCodexDesktopTurn(client: CodexDesktopClient, input: SendToAgentInput, turnId: string): Promise<void> {
+  const deadline = Date.now() + APP_SERVER_TURN_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const review = await loadReviewFile(input.documentPath);
+    const event = review.events?.find((item) => item.id === input.eventId);
+    if (!event || event.deliveryStatus === "handled" || event.deliveryStatus === "ignored") return;
+    const turn = client.getTurn(turnId);
+    if (turn && turn.status !== "inProgress") {
+      if (turn.status === "failed" || turn.status === "interrupted") {
+        const error = isRecord(turn.error) ? normalizeOptionalString(turn.error.message) : undefined;
+        throw new Error(error ?? `Codex turn ${turn.status}.`);
+      }
+      if (turn.status === "completed") return;
+    }
+    await sleep(1_000);
+  }
+  throw new Error("Timed out waiting for Codex Desktop to complete this Margent event. Check the target conversation before retrying.");
 }
 
 function createClaudeCodeCliAdapter(): AgentBridgeAdapter {
@@ -1412,6 +1520,132 @@ function createWorkBuddyCliAdapter(): AgentBridgeAdapter {
       }
     }
   };
+}
+
+function createDeepSeekHarnessAdapter(): AgentBridgeAdapter {
+  return {
+    provider: "deepseek-harness",
+    name: "deepseek-harness-web",
+    requiresSessionId: true,
+    async isAvailable() {
+      return true;
+    },
+    async send(input) {
+      const sessionId = input.sessionId;
+      if (!sessionId) {
+        return {
+          ok: false,
+          provider: "deepseek-harness",
+          error: "No DeepSeek Harness target session is bound for this document."
+        };
+      }
+
+      const endpoint =
+        input.endpoint ??
+        process.env.DEEPSEEK_HARNESS_WEB_URL ??
+        process.env.DSH_WEB_URL;
+      const deliveryId = `deepseek-harness-web:${input.eventId}:${randomUUID()}`;
+
+      try {
+        const resolvedEndpoint = resolveDeepSeekHarnessEndpoint(endpoint);
+        const before = await getDeepSeekHarnessSessionState({
+          endpoint: resolvedEndpoint,
+          sessionId
+        });
+        if (!before.found) {
+          return {
+            ok: false,
+            provider: "deepseek-harness",
+            error:
+              "DeepSeek Harness could not find the bound session. Rebind this document from the target DeepSeek Harness conversation."
+          };
+        }
+
+        await sendDeepSeekHarnessPrompt({
+          endpoint: resolvedEndpoint,
+          sessionId,
+          prompt: appendDeepSeekHarnessPromptInstructions(input.prompt),
+          rpcId: deliveryId,
+          clientTimeZone: getLocalTimeZone()
+        });
+        await input.onTurnStarted?.({
+          provider: "deepseek-harness",
+          sessionId,
+          deliveryId
+        });
+
+        await waitForDeepSeekHarnessTurn({
+          endpoint: resolvedEndpoint,
+          sessionId,
+          before
+        });
+        return {
+          ok: true,
+          provider: "deepseek-harness",
+          sessionId,
+          deliveryId
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          provider: "deepseek-harness",
+          sessionId,
+          deliveryId,
+          error:
+            error instanceof Error
+              ? truncateForUser(error.message)
+              : "DeepSeek Harness delivery failed."
+        };
+      }
+    }
+  };
+}
+
+async function waitForDeepSeekHarnessTurn(input: {
+  endpoint: string;
+  sessionId: string;
+  before: Awaited<ReturnType<typeof getDeepSeekHarnessSessionState>>;
+}): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = Date.now() + APP_SERVER_TURN_TIMEOUT_MS;
+  let observedRunning = input.before.running;
+  let promptObserved = false;
+
+  while (Date.now() < deadline) {
+    const state = await getDeepSeekHarnessSessionState({
+      endpoint: input.endpoint,
+      sessionId: input.sessionId
+    });
+    if (!state.found) {
+      throw new Error("DeepSeek Harness session disappeared while processing the task.");
+    }
+    if (state.running) {
+      observedRunning = true;
+    }
+    if (state.updatedAt > input.before.updatedAt) {
+      promptObserved = true;
+    }
+    if (
+      !state.running &&
+      promptObserved &&
+      (observedRunning || Date.now() - startedAt >= 5_000)
+    ) {
+      return;
+    }
+    await sleep(400);
+  }
+
+  throw new Error(
+    `DeepSeek Harness delivery timed out after ${APP_SERVER_TURN_TIMEOUT_MS}ms.`
+  );
+}
+
+function getLocalTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function getEventFromReview(review: ReviewFile, eventId: string): ReviewEvent {
@@ -1792,7 +2026,7 @@ class CodexAppServerClient {
   private formatDiagnostics(): string {
     const diagnostics = [
       ...this.notificationErrors,
-      this.stderrTail.trim()
+      cleanCodexDiagnostic(this.stderrTail)
     ].filter(Boolean);
     if (diagnostics.length === 0) {
       return "";
@@ -1915,10 +2149,15 @@ async function resolveCodexCommand(): Promise<string | null> {
   return cachedCodexCommand;
 }
 
-function getCodexCommandCandidates(): string[] {
+export function getCodexCommandCandidates(
+  platform: NodeJS.Platform = process.platform
+): string[] {
   const candidates = [
     normalizeOptionalString(process.env.CODEX_CLI_PATH),
-    process.platform === "darwin"
+    platform === "darwin"
+      ? "/Applications/ChatGPT.app/Contents/Resources/codex"
+      : undefined,
+    platform === "darwin"
       ? "/Applications/Codex.app/Contents/Resources/codex"
       : undefined,
     ...getPathExecutableCandidates("codex")

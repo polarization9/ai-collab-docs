@@ -4,11 +4,11 @@ import type {
 } from "../shared/agentTypes.js";
 import {
   applyDiscoveredAgentTarget,
-  isDeliverableAgentTarget,
   loadAgentDocumentLink
 } from "./agentLink.js";
 import { findClaudeCodeDiscoveryCandidates } from "./claudeCodeDiscoveryCandidates.js";
 import { findCodexDiscoveryCandidates } from "./codexDiscoveryCandidates.js";
+import { findDeepSeekHarnessDiscoveryCandidates } from "./deepSeekHarnessDiscoveryCandidates.js";
 import { findWorkBuddyDiscoveryCandidates } from "./workBuddyDiscoveryCandidates.js";
 import type { AgentDiscoveryCandidate } from "./agentDiscoveryTypes.js";
 
@@ -36,7 +36,7 @@ export async function discoverAgentSourceForDocument(
   markdownPath: string
 ): Promise<AgentDiscoveryResult> {
   const existing = await loadAgentDocumentLink(markdownPath);
-  if (existing?.target && isDeliverableAgentTarget(existing.target)) {
+  if (existing?.target) {
     return {
       status: "skipped-existing-target",
       candidates: [],
@@ -69,14 +69,19 @@ export async function discoverAgentSourceForDocument(
 async function collectDiscoveryCandidates(
   markdownPath: string
 ): Promise<AgentDiscoveryCandidate[]> {
-  const [workBuddyCandidates, claudeCodeCandidates, codexCandidates] = await Promise.all([
-    findWorkBuddyDiscoveryCandidates(markdownPath),
-    findClaudeCodeDiscoveryCandidates(markdownPath),
-    findCodexDiscoveryCandidates(markdownPath)
-  ]);
-  return [...workBuddyCandidates, ...claudeCodeCandidates, ...codexCandidates].filter((candidate) =>
-    Boolean(candidate.sessionId)
-  );
+  const [workBuddyCandidates, claudeCodeCandidates, codexCandidates, deepSeekCandidates] =
+    await Promise.all([
+      findWorkBuddyDiscoveryCandidates(markdownPath),
+      findClaudeCodeDiscoveryCandidates(markdownPath),
+      findCodexDiscoveryCandidates(markdownPath),
+      findDeepSeekHarnessDiscoveryCandidates(markdownPath)
+    ]);
+  return [
+    ...workBuddyCandidates,
+    ...claudeCodeCandidates,
+    ...codexCandidates,
+    ...deepSeekCandidates
+  ].filter((candidate) => Boolean(candidate.sessionId));
 }
 
 function chooseAutoBindCandidate(
@@ -168,6 +173,7 @@ function candidateToSession(
     role: candidate.role,
     sessionId: candidate.sessionId,
     cwd: candidate.cwd,
+    endpoint: candidate.endpoint,
     displayName: candidate.displayName,
     configuredAt,
     configuredBy: "agent",

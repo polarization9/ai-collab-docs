@@ -285,8 +285,13 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
   app.post("/api/agent-link/successor-instruction", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      const connection = readAgentInstructionRequest(request);
       response.json(
-        createAgentSuccessorInstruction(currentMarkdownPath, readAgentProviderRequest(request))
+        createAgentSuccessorInstruction(
+          currentMarkdownPath,
+          connection.provider,
+          connection.displayName
+        )
       );
     } catch (error) {
       sendApiError(response, error);
@@ -296,9 +301,11 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
   app.post("/api/agent-link/successor-instruction/copy", async (request, response) => {
     try {
       const currentMarkdownPath = getRequestMarkdownPath(request, markdownPath);
+      const connection = readAgentInstructionRequest(request);
       const instruction = createAgentSuccessorInstruction(
         currentMarkdownPath,
-        readAgentProviderRequest(request)
+        connection.provider,
+        connection.displayName
       );
       await writeSystemClipboardText(instruction.instruction);
       response.json(instruction);
@@ -379,7 +386,7 @@ export function startServer(options: StartServerOptions): Promise<StartedServer>
       if (
         created &&
         agentLink.connection.autoSendNewAnnotations &&
-        agentLink.connection.hasTarget
+        agentLink.connection.canDeliver
       ) {
         review = await createReviewEvent(currentMarkdownPath, {
           annotationId: created.id,
@@ -850,7 +857,10 @@ function readClipboardTextRequest(body: unknown): string {
   return (body as { text: string }).text;
 }
 
-function readAgentProviderRequest(request: express.Request): AgentProvider {
+function readAgentInstructionRequest(request: express.Request): {
+  provider?: AgentProvider;
+  displayName?: string;
+} {
   const bodyProvider =
     typeof request.body === "object" &&
     request.body !== null &&
@@ -859,17 +869,27 @@ function readAgentProviderRequest(request: express.Request): AgentProvider {
       : undefined;
   const queryProvider =
     typeof request.query.provider === "string" ? request.query.provider : undefined;
-  return parseAgentProvider(bodyProvider ?? queryProvider);
+  const bodyDisplayName =
+    typeof request.body === "object" &&
+    request.body !== null &&
+    typeof (request.body as { displayName?: unknown }).displayName === "string"
+      ? (request.body as { displayName: string }).displayName.trim()
+      : undefined;
+  return {
+    provider: parseAgentProvider(bodyProvider ?? queryProvider),
+    displayName: bodyDisplayName || undefined
+  };
 }
 
-function parseAgentProvider(provider: string | undefined): AgentProvider {
+function parseAgentProvider(provider: string | undefined): AgentProvider | undefined {
   if (!provider) {
-    return "codex";
+    return undefined;
   }
   if (
     provider === "codex" ||
     provider === "claude-code" ||
     provider === "workbuddy" ||
+    provider === "deepseek-harness" ||
     provider === "custom-cli"
   ) {
     return provider;

@@ -99,7 +99,7 @@ export function AnnotationThreadPopover({
   const eventBadge = pendingAnnotationIds.includes(activeAnnotationId)
     ? getLocalPendingEventBadge(agentLink, t)
     : getAnnotationEventBadge(latestEvent, t);
-  const canSendToAgent = Boolean(agentLink?.connection.hasTarget);
+  const canSendToAgent = Boolean(agentLink?.connection.canDeliver);
   const activeIndex = Math.max(
     0,
     annotations.findIndex((annotation) => annotation.id === activeAnnotationId)
@@ -685,6 +685,9 @@ function getAgentProviderName(provider: AgentProvider | null): string {
   }
   if (provider === "workbuddy") {
     return "WorkBuddy";
+  }
+  if (provider === "deepseek-harness") {
+    return "DeepSeek Harness";
   }
   if (provider === "custom-cli") {
     return "Custom CLI";

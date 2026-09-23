@@ -60,10 +60,10 @@ Codex 需要把 Margent MCP server 注册到本机 Codex 配置中。安装 `Mar
 cp ~/.codex/config.toml ~/.codex/config.toml.bak-margent-$(date +%Y%m%d%H%M%S)
 ```
 
-如果已有 `[mcp_servers.prd_reviewer]`，更新它；如果没有，新增：
+正式 MCP server id 使用 `margent`。如果已有旧的 `[mcp_servers.prd_reviewer]`，请把该 section 名改为 `[mcp_servers.margent]`，不要同时保留两份相同配置。
 
 ```toml
-[mcp_servers.prd_reviewer]
+[mcp_servers.margent]
 command = "/Applications/Margent.app/Contents/Resources/resources/node/bin/node"
 args = [
   "/Applications/Margent.app/Contents/Resources/_up_/dist/desktop/mcpCli.js"

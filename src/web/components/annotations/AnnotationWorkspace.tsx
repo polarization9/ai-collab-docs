@@ -857,7 +857,7 @@ export function AnnotationWorkspace({
   };
 
   const toggleAutoMonitor = async (enabled: boolean) => {
-    if (enabled && !agentLink?.connection.hasTarget) {
+    if (enabled && !agentLink?.connection.canDeliver) {
       setFeedback(t("toast.needAgentBinding"));
       return;
     }
@@ -880,7 +880,8 @@ export function AnnotationWorkspace({
     try {
       const response = await createAgentSuccessorInstruction(
         document.absolutePath,
-        agentLink?.connection.provider ?? "codex"
+        agentLink?.connection.provider ?? undefined,
+        agentLink?.connection.displayName ?? undefined
       );
       await copyText(response.instruction);
       setFeedback(successMessage);
@@ -894,6 +895,10 @@ export function AnnotationWorkspace({
   };
 
   const handleUnavailableAgentSend = async () => {
+    if (agentLink?.connection.hasTarget && !agentLink.connection.canDeliver) {
+      setFeedback(t("toast.agentDeliveryUnavailable"));
+      return;
+    }
     await copyAgentConnectionInstruction(t("annotation.agentInstructionCopied"));
   };
 
@@ -1158,7 +1163,7 @@ export function AnnotationWorkspace({
               draft={editorAnnotationDraft}
               onCancel={() => setEditorAnnotationDraft(null)}
               onCreate={createEditorAnnotation}
-              canSendToAgent={Boolean(agentLink?.connection.hasTarget)}
+              canSendToAgent={Boolean(agentLink?.connection.canDeliver)}
               onSendWithoutAgent={handleUnavailableAgentSend}
             />
           </section>
@@ -1179,7 +1184,7 @@ export function AnnotationWorkspace({
               trackSelection
               onCancel={() => setDraft(null)}
               onCreate={createReadingAnnotation}
-              canSendToAgent={Boolean(agentLink?.connection.hasTarget)}
+              canSendToAgent={Boolean(agentLink?.connection.canDeliver)}
               onSendWithoutAgent={handleUnavailableAgentSend}
             />
             {threadPopover ? (

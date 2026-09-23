@@ -169,13 +169,14 @@ export async function createSuccessorInstruction(
 
 export async function createAgentSuccessorInstruction(
   documentPath?: string,
-  provider: AgentProvider = "codex"
+  provider?: AgentProvider,
+  displayName?: string
 ): Promise<AgentSuccessorInstructionResponse> {
   return requestJson<AgentSuccessorInstructionResponse>(
     withDocumentPath("/api/agent-link/successor-instruction", documentPath),
     {
       method: "POST",
-      body: JSON.stringify({ provider })
+      body: JSON.stringify({ provider, displayName })
     }
   );
 }
@@ -193,13 +194,14 @@ export async function copySuccessorInstruction(
 
 export async function copyAgentSuccessorInstruction(
   documentPath?: string,
-  provider: AgentProvider = "codex"
+  provider?: AgentProvider,
+  displayName?: string
 ): Promise<AgentSuccessorInstructionResponse> {
   return requestJson<AgentSuccessorInstructionResponse>(
     withDocumentPath("/api/agent-link/successor-instruction/copy", documentPath),
     {
       method: "POST",
-      body: JSON.stringify({ provider })
+      body: JSON.stringify({ provider, displayName })
     }
   );
 }

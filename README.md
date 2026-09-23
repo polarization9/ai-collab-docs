@@ -59,7 +59,7 @@ Margent starts a local `127.0.0.1` service for the desktop app. It does not expo
 
 ## Agent Collaboration
 
-Margent can send annotation tasks to a connected Agent session. Codex is the first fully supported provider and remains the default provider for automatic collaboration.
+Margent can send annotation tasks to a connected Agent session. Built-in adapters currently support Codex, Claude Code, WorkBuddy, and DeepSeek Harness. Delivery always resumes the bound session instead of silently creating a context-free conversation; the DeepSeek Harness adapter uses its local `dsh web` endpoint.
 
 For first setup, ask Codex to initialize Margent on your machine and read [Margent Codex 初始化指南.md](docs/Margent%20Codex%20初始化指南.md). The initialization should cover:
 
@@ -153,7 +153,7 @@ Margent 会为桌面 App 启动一个本地 `127.0.0.1` 服务，不会暴露公
 
 ## Agent 协作
 
-当当前文档已经连接到 Agent 会话时，Margent 可以把批注任务交给 Agent 处理。Codex 是当前第一个完整支持的 provider，也是自动协作的默认 provider。
+当当前文档已经连接到 Agent 会话时，Margent 可以把批注任务交给 Agent 处理。当前内置 adapter 支持 Codex、Claude Code、WorkBuddy 和 DeepSeek Harness；投递只会接续已绑定会话，不会静默创建一个丢失上下文的新会话。DeepSeek Harness 通过本机 `dsh web` 通道接收任务。
 
 首次配置时，可以让 Codex 阅读 [Margent Codex 初始化指南.md](docs/Margent%20Codex%20初始化指南.md)，并帮你完成：
 

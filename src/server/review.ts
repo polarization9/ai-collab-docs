@@ -292,6 +292,7 @@ function toReviewEventAgentRef(session: AgentSessionReference): ReviewEvent["tar
     role: session.role,
     sessionId: session.sessionId,
     cwd: session.cwd,
+    endpoint: session.endpoint,
     displayName: session.displayName,
     configuredAt: session.configuredAt,
     configuredBy: session.configuredBy,

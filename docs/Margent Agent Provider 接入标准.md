@@ -8,6 +8,8 @@
 
 - Codex
 - Claude Code
+- WorkBuddy
+- DeepSeek Harness
 - Gemini CLI
 - Cursor / Windsurf 一类 IDE Agent
 - 自定义 CLI Agent
@@ -225,15 +227,16 @@ Agent 侧要求：
 
 - 如果 provider 有长期上下文会话，必须能提供可 resume 的 sessionId / conversation id。
 - 如果 provider 不支持长期上下文，必须在 adapter capability 中明确声明不支持 resume，且不能伪装成 L4。
-- 如果没有 sessionId，最多只能保存 provider、cwd、displayName 作为诊断信息，不能视为可投递 target。
+- 未正式适配的 MCP 客户端使用 `provider = custom-cli`，并把真实产品名写入 `displayName`；不得因为历史默认值而记录成 Codex。
+- 仅完成 MCP 绑定但没有 Margent delivery adapter 的 target 可以显示为“已连接”，但不能视为可主动投递 target。
 
 Margent 改造：
 
 - 使用 `reviewer_bind_current_agent_session` 绑定 source 或 successor。
 - 写入 `source` / `target` 到 `Document.margent-agent.json`。
-- 对没有 sessionId 的 sessionful provider，允许 L1 诊断性记录，但不允许 L2/L3 投递。
-- 自动发现不能覆盖已有可投递 target；缺少 sessionId 的 sessionful target 只是诊断信息，不应阻止高置信自动发现修复连接。
-- 只有当文档没有可投递 target，且统一 Discovery 产出高置信胜出候选时，自动发现才可以写入 target。
+- 连接状态必须分别暴露“已有 target”和“可主动投递”，UI 不能把二者混为一谈。
+- 自动发现不能覆盖任何已有 target，包括仅通过 MCP 显式绑定的 custom Agent；修复或切换连接必须由用户重新绑定。
+- 只有当文档完全没有 target，且统一 Discovery 产出高置信胜出候选时，自动发现才可以写入 target。
 - 自动发现默认只写当前 `target`；只有候选明确是 `source` 会话，且文档还没有 source 时，才可以同时补写 `source`。
 - 如果候选明确是 `successor`，只能写 `target.role = "successor"`，不能把它写成文档来源 `source`。
 - 多 provider 候选必须放进统一 Discovery 判断，不能按 provider 顺序 fallback。
@@ -388,6 +391,7 @@ Agent 侧要求：
 Margent 改造：
 
 - 自动监控读取 Agent link，而不是 Codex link。
+- MCP 只更新自动开关时不要求重复传 provider；开启能力按本次更新后实际生效的 target 判断，并与绑定更新在同一写入锁内完成。只更新 source 不影响已有 target 的投递能力；未绑定或没有正式 adapter 的 target 不能开启自动投递。
 - event queue 使用 provider 中性字段。
 - stale delivery recovery 适用于所有 provider。
 - 对 provider 不可用时停止自动投递并显示错误。
@@ -980,8 +984,10 @@ Adapter 不负责扫描本地历史日志、选择当前文档应该绑定哪个
 Discovery 是 Margent-owned 的统一能力：
 
 - 各 provider 可以提供候选来源，但不直接写当前连接。
-- Margent 统一合并 Codex、Claude Code、WorkBuddy 和未来 provider 候选。
+- Margent 统一合并 Codex、Claude Code、WorkBuddy、DeepSeek Harness 和未来 provider 候选。
 - 证据优先级是 `显式绑定 > 真实 Margent 操作 > 创建/编辑过文档 > 只提到路径 > 最近活跃时间`。
+- 强证据必须同时匹配结构化工具名和目标路径参数；读取文件、搜索命令、回复或写入内容中提到工具名或路径，都不能升级为绑定或编辑证据。`apply_patch` 只检查补丁目标路径，不检查补丁正文。
+- `mcporter` 兼容入口只识别可解析的单条直接调用，解析真实的 `documentPath` 和 `role` 参数；被打印的示例、复合脚本或动态参数不作为强证据。
 - 已有可投递 target 时不覆盖。
 - 无可投递 target 时，只有高置信胜出候选才自动绑定；候选可以不止一个，但第一名必须在证据层级或分数上明显胜出。
 - 多 provider 或多 session 候选没有清晰胜出者时不自动选择，交给用户手动连接。
@@ -1116,13 +1122,14 @@ createExternalCommandAdapter(manifest): AgentBridgeAdapter
 
 ## 8. 当前内置 Provider 状态
 
-更新时间：2026-06-18。
+更新时间：2026-08-17。
 
 | Provider | Provider id | 当前等级 | 当前状态 | 主要入口 |
 | --- | --- | --- | --- | --- |
 | Codex | `codex` | L4 | 已有完整体验，继续作为基线 provider | Codex app-server / MCP |
 | Claude Code | `claude-code` | L4 | 已支持绑定、手动投递、自动投递、resume、统一 discovery | `claude -p --resume` / MCP |
 | WorkBuddy | `workbuddy` | L4 | 已支持绑定、手动投递、自动投递、resume、统一 discovery | `codebuddy -p --session-id` / MCP |
+| DeepSeek Harness | `deepseek-harness` | L4（待实机验收） | 已实现绑定、同 session 投递、自动投递和统一 discovery | DSH Web RPC / MCP |
 | Custom CLI | `custom-cli` | 协议草案 | 只定义 External Adapter Protocol，暂未产品化 | 自定义 adapter manifest |
 
 暂不放进当前轮：
@@ -1206,7 +1213,7 @@ WorkBuddy L4: MCP 协作、手动投递、自动投递、本地会话发现、re
 - WorkBuddy 属于 sessionful provider，没有 sessionId 时不能投递，也不能偷偷新建会话。
 - WorkBuddy adapter 只负责把任务投递到指定 session。
 - WorkBuddy discovery 只负责产出候选，不直接决定绑定。
-- Margent 统一合并 Codex、Claude Code、WorkBuddy 候选并按同一套证据规则决定是否自动绑定。
+- Margent 统一合并 Codex、Claude Code、WorkBuddy、DeepSeek Harness 候选并按同一套证据规则决定是否自动绑定。
 - 第一版不做设置页 provider 下拉选择，继续使用当前连接、绑定和自动发现策略。
 
 安全约束：
@@ -1242,7 +1249,55 @@ Discovery 规则：
 - 已绑定 Codex / Claude Code 的文档不会被 WorkBuddy discovery 覆盖。
 - WorkBuddy CLI 不可用时，event 会进入 failed，并返回 WorkBuddy 相关的可读错误。
 
-## 12. 本轮验收记录
+## 12. DeepSeek Harness 当前支持等级
+
+DeepSeek Harness 使用 provider id `deepseek-harness`，UI 显示名为 `DeepSeek Harness`。
+
+关键判断：
+
+- 不使用 `dsh --profile headless` 投递，因为 headless 每次都会创建新 session，无法继承用户当前会话上下文。
+- 投递使用 DSH 本地 Web RPC 的 `session.prompt`，并携带已绑定的 `sessionId` 和 `mode = queue`，把任务追加到原会话。
+- `reviewer_bind_current_agent_session` 会从 `DSH_SESSION_ID` 和 `DSH_WEB_URL` 自动读取当前会话与本地 endpoint；也允许显式提交 `sessionId` / `endpoint`。
+- DeepSeek Harness 属于 sessionful provider；缺少 sessionId 时不能显示为可投递连接，也不能偷偷创建新会话。
+
+投递流程：
+
+```text
+读取绑定的 sessionId + endpoint
+→ session.list 确认会话存在
+→ session.prompt(mode=queue) 追加 Margent 任务
+→ 等待该 session 从 running 回到 idle
+→ 检查 event 是否已通过 Margent MCP handled
+```
+
+MCP 约束：
+
+- 优先使用 DSH profile 中的原生 `mcp__margent__reviewer_*` 工具。
+- 已通过 `mcporter` 暴露 Margent MCP 的 profile 可以调用 `margent.reviewer_*` 作为兼容入口。
+- 普通文本中的伪工具调用不算完成；event 必须有 MCP handled 或 review 文件完成证据。
+- 文档修改仍应通过 `reviewer_apply_document_edit`，由 Margent 统一处理保存、冲突、锚点和状态。
+
+Discovery：
+
+- 扫描 `~/.dsh/sessions/**/session.jsonl.zstd` 和明文 `session.jsonl`。
+- DSH 的 Zstandard 日志由多个独立 frame 追加组成，必须逐 frame 解压，不能只解第一帧。
+- 读取 session header 中的 `id`、`cwd`、`parentSession` 和 `origin`；不把 subagent session 当作可绑定主会话。
+- `parentSession` / `parentSessionId` 只表示继承关系，用户主动 fork 也会携带；仅 `origin = subagent` 排除候选。普通分叉会话与主会话一样进入统一决策，不直接自动绑定。
+- 识别 DSH 的顶层 `tool/call` 及 `assistant/message -> tool-call` 结构。
+- 仅产出候选，继续交给 Margent 统一 discovery 打分；不覆盖已有 target。
+
+可配置项：
+
+```text
+DEEPSEEK_HARNESS_WEB_URL / DSH_WEB_URL
+DEEPSEEK_HARNESS_SESSION_ID / DSH_SESSION_ID
+DEEPSEEK_HARNESS_WORKSPACE / DSH_WORKSPACE
+DEEPSEEK_HARNESS_HOME / DSH_HOME
+```
+
+当前自动检查已覆盖 provider 绑定、endpoint 持久化、MCP 自动开关、工具证据误判、用户 fork / subagent 区分、DSH tool-call 证据解析和多帧 Zstandard discovery。还需在 Margent UI 中完成一条真实批注的手动投递、自动投递与 handled 状态实机验收。
+
+## 13. 本轮验收记录
 
 验收日期：2026-06-18。
 
@@ -1262,7 +1317,7 @@ Discovery 规则：
 - WorkBuddy CLI 被禁用时，投递进入 failed，并提示 WorkBuddy CLI 不可用。
 - event 已经有 Agent 回复或批注已解决时，Margent 可以把历史 failed / pending 状态修复为 handled。
 
-## 13. 判断原则
+## 14. 判断原则
 
 接入新 Agent 时，优先保证纵向闭环，而不是一次性补齐所有周边能力。
 

@@ -1,4 +1,9 @@
-export type AgentProvider = "codex" | "claude-code" | "workbuddy" | "custom-cli";
+export type AgentProvider =
+  | "codex"
+  | "claude-code"
+  | "workbuddy"
+  | "deepseek-harness"
+  | "custom-cli";
 
 export type AgentSessionRole = "source" | "successor";
 
@@ -16,6 +21,7 @@ export type AgentSessionReference = {
   sessionId?: string;
   turnId?: string;
   cwd?: string;
+  endpoint?: string;
   displayName?: string;
   configuredAt?: string;
   configuredBy?: AgentConfiguredBy;
@@ -37,7 +43,9 @@ export type AgentDocumentLink = {
 export type AgentLinkConnection = {
   hasSource: boolean;
   hasTarget: boolean;
+  canDeliver: boolean;
   provider: AgentProvider | null;
+  displayName: string | null;
   targetRole: AgentSessionRole | null;
   autoSendNewAnnotations: boolean;
   sourceAvailable: boolean | null;

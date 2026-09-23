@@ -238,9 +238,11 @@ function AnnotationAgentStatus({
   const connection = agentLink?.connection;
   const autoEnabled = Boolean(connection?.autoSendNewAnnotations);
   const canUseAutoMonitor =
-    connection?.provider === "codex" ||
-    connection?.provider === "claude-code" ||
-    connection?.provider === "workbuddy";
+    Boolean(connection?.canDeliver) &&
+    (connection?.provider === "codex" ||
+      connection?.provider === "claude-code" ||
+      connection?.provider === "workbuddy" ||
+      connection?.provider === "deepseek-harness");
   const view = getAgentRouteView(agentLink, t, error);
   const copyInstructionLabel = connection?.hasTarget ? t("agent.copySuccessor") : t("agent.copyConnect");
 
@@ -337,23 +339,39 @@ function getAgentRouteView(
     };
   }
 
-  const providerName = getAgentProviderName(connection.provider);
-  const mode = connection.autoSendNewAnnotations ? t("agent.autoMode") : t("agent.manualMode");
+  const providerName = getAgentProviderName(connection.provider, connection.displayName);
+  const mode = connection.canDeliver
+    ? connection.autoSendNewAnnotations
+      ? t("agent.autoMode")
+      : t("agent.manualMode")
+    : t("agent.mcpMode");
 
   return {
-    tone: connection.autoSendNewAnnotations ? "auto" : connection.targetRole ?? "source",
+    tone:
+      connection.canDeliver && connection.autoSendNewAnnotations
+        ? "auto"
+        : connection.targetRole ?? "source",
     label: t("agent.detected", { provider: providerName }),
     detail: mode,
     threadTitle: `${providerName} · ${mode}`
   };
 }
 
-function getAgentProviderName(provider: AgentLinkResponse["connection"]["provider"]): string {
+function getAgentProviderName(
+  provider: AgentLinkResponse["connection"]["provider"],
+  displayName?: string | null
+): string {
+  if (displayName?.trim()) {
+    return displayName.trim();
+  }
   if (provider === "claude-code") {
     return "Claude Code";
   }
   if (provider === "workbuddy") {
     return "WorkBuddy";
+  }
+  if (provider === "deepseek-harness") {
+    return "DeepSeek Harness";
   }
   if (provider === "custom-cli") {
     return "Custom CLI";

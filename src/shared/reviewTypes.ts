@@ -143,6 +143,7 @@ export type ReviewEventDeliveryAdapter =
   | "codex-app-server"
   | "claude-code-cli"
   | "workbuddy-codebuddy-cli"
+  | "deepseek-harness-web"
   | "custom-cli";
 
 export type ReviewEventAgentReference = {
@@ -150,6 +151,7 @@ export type ReviewEventAgentReference = {
   role?: AgentSessionRole;
   sessionId?: string;
   cwd?: string;
+  endpoint?: string;
   displayName?: string;
   configuredAt?: string;
   configuredBy?: AgentConfiguredBy;

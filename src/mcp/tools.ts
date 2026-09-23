@@ -61,7 +61,13 @@ const REVIEW_EVENT_STATUS_VALUES = [
   "failed"
 ] as const;
 const CODEX_TARGET_ROLE_VALUES = ["source", "successor"] as const;
-const AGENT_PROVIDER_VALUES = ["codex", "claude-code", "workbuddy", "custom-cli"] as const;
+const AGENT_PROVIDER_VALUES = [
+  "codex",
+  "claude-code",
+  "workbuddy",
+  "deepseek-harness",
+  "custom-cli"
+] as const;
 const AGENT_SESSION_ROLE_VALUES = ["source", "successor"] as const;
 
 export function registerReviewerTools(server: McpServer, markdownPath?: string): void {
@@ -116,7 +122,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         provider: z
           .enum(AGENT_PROVIDER_VALUES)
           .optional()
-          .describe("Agent provider. Defaults to codex."),
+          .describe("Agent provider. Defaults to custom-cli for an unknown Agent."),
         sourceSessionId: z.string().min(1).optional().describe("Source Agent session id."),
         targetSessionId: z.string().min(1).optional().describe("Current target Agent session id."),
         targetRole: z
@@ -124,7 +130,18 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           .optional()
           .describe("Whether the target is the source or successor session."),
         cwd: z.string().min(1).optional().describe("Workspace path for the Agent session."),
-        displayName: z.string().min(1).optional().describe("Agent display name."),
+        endpoint: z
+          .string()
+          .url()
+          .optional()
+          .describe("Optional local Agent delivery endpoint."),
+        displayName: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Agent product name shown by Margent. Required when provider is custom-cli."
+          ),
         autoSendNewAnnotations: z
           .boolean()
           .optional()
@@ -144,6 +161,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
       targetSessionId,
       targetRole,
       cwd,
+      endpoint,
       displayName,
       autoSendNewAnnotations
     }) =>
@@ -155,6 +173,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           targetSessionId,
           targetRole,
           cwd,
+          endpoint,
           displayName,
           autoSendNewAnnotations
         })
@@ -180,10 +199,23 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           .min(1)
           .optional()
           .describe(
-            "Agent session id. Required for sessionful providers such as Codex, Claude Code, and WorkBuddy when Margent cannot detect it automatically."
+            "Agent session id. Required for sessionful providers such as Codex, Claude Code, WorkBuddy, and DeepSeek Harness when Margent cannot detect it automatically."
           ),
         cwd: z.string().min(1).optional().describe("Optional Agent workspace path."),
-        displayName: z.string().min(1).optional().describe("Optional Agent display name."),
+        endpoint: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            "Optional local delivery endpoint. DeepSeek Harness normally supplies DSH_WEB_URL automatically."
+          ),
+        displayName: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Agent product name shown by Margent. Required when provider is custom-cli, for example Hermes."
+          ),
         autoSendNewAnnotations: z
           .boolean()
           .optional()
@@ -196,7 +228,16 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
         openWorldHint: false
       }
     },
-    async ({ documentPath, provider, role, sessionId, cwd, displayName, autoSendNewAnnotations }) =>
+    async ({
+      documentPath,
+      provider,
+      role,
+      sessionId,
+      cwd,
+      endpoint,
+      displayName,
+      autoSendNewAnnotations
+    }) =>
       jsonToolResult(
         await bindCurrentAgentSessionPayload(markdownPath, {
           documentPath,
@@ -204,6 +245,7 @@ export function registerReviewerTools(server: McpServer, markdownPath?: string):
           role,
           sessionId,
           cwd,
+          endpoint,
           displayName,
           autoSendNewAnnotations
         })
@@ -818,13 +860,19 @@ async function updateAgentLinkPayload(
     targetSessionId?: string;
     targetRole?: AgentSessionRole;
     cwd?: string;
+    endpoint?: string;
     displayName?: string;
     autoSendNewAnnotations?: boolean;
   }
 ): Promise<ToolResultPayload> {
   const resolvedMarkdownPath = resolveToolMarkdownPath(markdownPath, input.documentPath);
   const now = new Date().toISOString();
-  const provider = input.provider ?? "codex";
+  const provider = input.provider ?? "custom-cli";
+  const displayName = input.displayName?.trim();
+  if (provider === "custom-cli" && (input.sourceSessionId || input.targetSessionId) && !displayName) {
+    throw new Error("displayName is required when linking a custom Agent provider.");
+  }
+  const resolvedDisplayName = displayName ?? getProviderDisplayName(provider);
   await updateAgentDocumentLink(resolvedMarkdownPath, {
     source: input.sourceSessionId
       ? {
@@ -832,7 +880,8 @@ async function updateAgentLinkPayload(
           role: "source",
           sessionId: input.sourceSessionId,
           cwd: input.cwd,
-          displayName: input.displayName,
+          endpoint: input.endpoint,
+          displayName: resolvedDisplayName,
           configuredAt: now,
           configuredBy: "agent",
           configuredVia: "source"
@@ -844,7 +893,8 @@ async function updateAgentLinkPayload(
           role: input.targetRole ?? "source",
           sessionId: input.targetSessionId,
           cwd: input.cwd,
-          displayName: input.displayName,
+          endpoint: input.endpoint,
+          displayName: resolvedDisplayName,
           configuredAt: now,
           configuredBy: "agent",
           configuredVia: input.targetRole === "successor" ? "mcp-bind-instruction" : "source"
@@ -868,6 +918,7 @@ async function bindCurrentAgentSessionPayload(
     role: AgentSessionRole;
     sessionId?: string;
     cwd?: string;
+    endpoint?: string;
     displayName?: string;
     autoSendNewAnnotations?: boolean;
   }

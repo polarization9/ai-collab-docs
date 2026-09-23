@@ -68,7 +68,12 @@ export async function updateAgentDocumentLink(
         : base.bridge
     };
 
-    return saveAgentDocumentLink(markdownPath, updated);
+    const normalized = normalizeAgentDocumentLink(updated, markdownPath);
+    if (request.bridge?.autoSendNewAnnotations && normalized.bridge) {
+      const target = resolveAgentTarget(normalized);
+      normalized.bridge.autoSendNewAnnotations = Boolean(target && canDeliverToAgentTarget(target));
+    }
+    return saveAgentDocumentLink(markdownPath, normalized);
   });
 }
 
@@ -98,16 +103,13 @@ export async function applyDiscoveredAgentTarget(
   return withAgentLinkMutation(markdownPath, async () => {
     const existing = await loadAgentDocumentLink(markdownPath);
     const base = existing ?? createEmptyAgentDocumentLink(markdownPath);
-    const existingTargetIsDeliverable = Boolean(
-      base.target && isDeliverableAgentTarget(base.target)
-    );
     return saveAgentDocumentLink(markdownPath, {
       ...base,
       source:
         input.source && !base.source?.sessionId
           ? normalizeSession(input.source, "source")
           : base.source,
-      target: existingTargetIsDeliverable ? base.target : normalizeSession(input.target)
+      target: base.target ?? normalizeSession(input.target)
     });
   });
 }
@@ -115,7 +117,7 @@ export async function applyDiscoveredAgentTarget(
 export async function getAgentLinkResponse(markdownPath: string): Promise<AgentLinkResponse> {
   const link = await loadAgentDocumentLink(markdownPath);
   const target = resolveAgentTarget(link);
-  const hasDeliverableTarget = Boolean(target && isDeliverableAgentTarget(target));
+  const hasTarget = Boolean(target && isDeliverableAgentTarget(target));
   return {
     documentPath: markdownPath,
     agentLinkPath: getAgentLinkPath(markdownPath),
@@ -123,8 +125,10 @@ export async function getAgentLinkResponse(markdownPath: string): Promise<AgentL
     link,
     connection: {
       hasSource: Boolean(getSourceSessionId(link)),
-      hasTarget: hasDeliverableTarget,
+      hasTarget,
+      canDeliver: Boolean(target && canDeliverToAgentTarget(target)),
       provider: target?.provider ?? null,
+      displayName: target?.displayName ?? null,
       targetRole: target?.role ?? null,
       autoSendNewAnnotations: Boolean(link?.bridge?.autoSendNewAnnotations),
       sourceAvailable: link?.source?.sessionId ? null : false
@@ -152,18 +156,35 @@ export function resolveAgentTarget(
 
 export function createAgentSuccessorInstruction(
   markdownPath: string,
-  provider: AgentProvider = "codex"
+  provider?: AgentProvider,
+  displayName?: string
 ): AgentSuccessorInstructionResponse {
-  const toolName =
-    provider === "codex"
-      ? "reviewer_bind_current_codex_thread"
-      : "reviewer_bind_current_agent_session";
-  const providerLine =
-    provider === "codex" ? undefined : `  provider: ${JSON.stringify(provider)},`;
+  const resolvedProvider = provider ?? "custom-cli";
+  const resolvedDisplayName = normalizeOptionalString(displayName);
+  const bindingCall = provider
+    ? [
+        "reviewer_bind_current_agent_session({",
+        `  documentPath: ${JSON.stringify(markdownPath)},`,
+        `  provider: ${JSON.stringify(resolvedProvider)},`,
+        '  role: "successor",',
+        `  displayName: ${JSON.stringify(
+          resolvedDisplayName ?? getProviderDisplayName(resolvedProvider)
+        )}`,
+        "})"
+      ]
+    : [
+        "请根据当前 Agent 产品选择 provider，并调用 reviewer_bind_current_agent_session：",
+        "- Codex 使用 codex；Claude Code 使用 claude-code；WorkBuddy 使用 workbuddy；DeepSeek Harness 使用 deepseek-harness。",
+        "- 其他 Agent 使用 custom-cli。",
+        "- displayName 必须填写当前 Agent 产品的真实名称，例如 Hermes。",
+        "- documentPath 和 role 分别使用：",
+        `  documentPath: ${JSON.stringify(markdownPath)}`,
+        '  role: "successor"'
+      ];
 
   return {
     documentPath: markdownPath,
-    provider,
+    provider: resolvedProvider,
     instruction: [
       "请把你当前这个 Agent 会话绑定为 Margent 的接续对话。",
       "",
@@ -171,11 +192,7 @@ export function createAgentSuccessorInstruction(
       markdownPath,
       "",
       "请调用 Margent MCP：",
-      `${toolName}({`,
-      `  documentPath: ${JSON.stringify(markdownPath)},`,
-      ...(providerLine ? [providerLine] : []),
-      '  role: "successor"',
-      "})",
+      ...bindingCall,
       "",
       "绑定成功后，请回复我：已连接接续对话。"
     ].join("\n")
@@ -189,15 +206,23 @@ export async function bindAgentSession(
     role: AgentSessionRole;
     sessionId?: string;
     cwd?: string;
+    endpoint?: string;
     displayName?: string;
     autoSendNewAnnotations?: boolean;
   }
 ): Promise<AgentDocumentLink> {
   return withAgentLinkMutation(markdownPath, async () => {
+    const displayName = normalizeOptionalString(input.displayName);
+    if (input.provider === "custom-cli" && !displayName) {
+      throw new Error("displayName is required when binding a custom Agent provider.");
+    }
     const sessionId = normalizeOptionalString(
       input.sessionId ?? getCurrentAgentSessionId(input.provider)
     );
     const cwd = normalizeOptionalString(input.cwd ?? getCurrentAgentCwd(input.provider));
+    const endpoint = normalizeOptionalString(
+      input.endpoint ?? getCurrentAgentEndpoint(input.provider)
+    );
     const requiresSessionId = agentTargetRequiresSessionId(input.provider);
 
     if (requiresSessionId && !sessionId) {
@@ -217,7 +242,8 @@ export async function bindAgentSession(
               role: "source",
               sessionId,
               cwd,
-              displayName: input.displayName ?? getProviderDisplayName(input.provider),
+              endpoint,
+              displayName: displayName ?? getProviderDisplayName(input.provider),
               configuredAt: base.source?.configuredAt ?? now,
               configuredBy: "agent",
               configuredVia: "source"
@@ -230,7 +256,8 @@ export async function bindAgentSession(
       role: input.role,
       sessionId,
       cwd,
-      displayName: input.displayName ?? getProviderDisplayName(input.provider),
+      endpoint,
+      displayName: displayName ?? getProviderDisplayName(input.provider),
       configuredAt: now,
       configuredBy: "agent",
       configuredVia: input.role === "source" ? "source" : "mcp-bind-instruction"
@@ -242,9 +269,11 @@ export async function bindAgentSession(
       target,
       bridge: {
         ...base.bridge,
-        ...(input.autoSendNewAnnotations === undefined
-          ? {}
-          : { autoSendNewAnnotations: input.autoSendNewAnnotations })
+        ...(input.provider === "custom-cli"
+          ? { autoSendNewAnnotations: false }
+          : input.autoSendNewAnnotations === undefined
+            ? {}
+            : { autoSendNewAnnotations: input.autoSendNewAnnotations })
       }
     });
   });
@@ -340,6 +369,9 @@ export function getProviderDisplayName(provider: AgentProvider): string {
   if (provider === "workbuddy") {
     return "WorkBuddy";
   }
+  if (provider === "deepseek-harness") {
+    return "DeepSeek Harness";
+  }
   if (provider === "custom-cli") {
     return "Custom CLI";
   }
@@ -368,6 +400,7 @@ function sourceToDefaultTarget(source: AgentSessionReference): AgentSessionRefer
     role: "source",
     sessionId: source.sessionId,
     cwd: source.cwd,
+    endpoint: source.endpoint,
     displayName: source.displayName,
     configuredAt: source.configuredAt,
     configuredBy: source.configuredBy,
@@ -406,18 +439,37 @@ function normalizeSession(
   session: AgentSessionReference,
   defaultRole?: AgentSessionRole
 ): AgentSessionReference {
-  const provider = normalizeProvider(session.provider);
+  const displayName = normalizeOptionalString(session.displayName);
+  const sessionId = normalizeOptionalString(session.sessionId);
+  const provider = normalizeSessionProvider(session.provider, displayName, sessionId);
   return {
     provider,
     role: normalizeRole(session.role ?? defaultRole),
-    sessionId: normalizeOptionalString(session.sessionId),
+    sessionId,
     turnId: normalizeOptionalString(session.turnId),
     cwd: normalizeOptionalString(session.cwd),
-    displayName: normalizeOptionalString(session.displayName) ?? getProviderDisplayName(provider),
+    endpoint: normalizeOptionalString(session.endpoint),
+    displayName: displayName ?? getProviderDisplayName(provider),
     configuredAt: normalizeOptionalString(session.configuredAt),
     configuredBy: session.configuredBy === "user" ? "user" : "agent",
     configuredVia: normalizeConfiguredVia(session.configuredVia)
   };
+}
+
+function normalizeSessionProvider(
+  provider: unknown,
+  displayName: string | undefined,
+  sessionId: string | undefined
+): AgentProvider {
+  const normalized = normalizeProvider(provider);
+  if (
+    normalized === "custom-cli" &&
+    sessionId &&
+    displayName?.toLowerCase() === "deepseek harness"
+  ) {
+    return "deepseek-harness";
+  }
+  return normalized;
 }
 
 function normalizeBridge(bridge: NonNullable<AgentDocumentLink["bridge"]>) {
@@ -429,10 +481,16 @@ function normalizeBridge(bridge: NonNullable<AgentDocumentLink["bridge"]>) {
 }
 
 function normalizeProvider(provider: unknown): AgentProvider {
-  if (provider === "claude-code" || provider === "workbuddy" || provider === "custom-cli") {
+  if (
+    provider === "codex" ||
+    provider === "claude-code" ||
+    provider === "workbuddy" ||
+    provider === "deepseek-harness" ||
+    provider === "custom-cli"
+  ) {
     return provider;
   }
-  return "codex";
+  return "custom-cli";
 }
 
 function normalizeRole(role: unknown): AgentSessionRole | undefined {
@@ -584,6 +642,12 @@ function getCurrentAgentSessionId(provider: AgentProvider): string | undefined {
       normalizeOptionalString(process.env.CODEBUDDY_SESSION_ID)
     );
   }
+  if (provider === "deepseek-harness") {
+    return (
+      normalizeOptionalString(process.env.DEEPSEEK_HARNESS_SESSION_ID) ??
+      normalizeOptionalString(process.env.DSH_SESSION_ID)
+    );
+  }
   return normalizeOptionalString(process.env.MARGENT_AGENT_SESSION_ID);
 }
 
@@ -591,8 +655,17 @@ export function isDeliverableAgentTarget(target: AgentSessionReference): boolean
   return !agentTargetRequiresSessionId(target.provider) || Boolean(target.sessionId);
 }
 
+export function canDeliverToAgentTarget(target: AgentSessionReference): boolean {
+  return target.provider !== "custom-cli" && isDeliverableAgentTarget(target);
+}
+
 export function agentTargetRequiresSessionId(provider: AgentProvider): boolean {
-  return provider === "codex" || provider === "claude-code" || provider === "workbuddy";
+  return (
+    provider === "codex" ||
+    provider === "claude-code" ||
+    provider === "workbuddy" ||
+    provider === "deepseek-harness"
+  );
 }
 
 function getCurrentAgentCwd(provider: AgentProvider): string | undefined {
@@ -609,7 +682,24 @@ function getCurrentAgentCwd(provider: AgentProvider): string | undefined {
       process.cwd()
     );
   }
+  if (provider === "deepseek-harness") {
+    return (
+      normalizeOptionalString(process.env.DEEPSEEK_HARNESS_WORKSPACE) ??
+      normalizeOptionalString(process.env.DSH_WORKSPACE) ??
+      process.cwd()
+    );
+  }
   return normalizeOptionalString(process.env.MARGENT_AGENT_WORKSPACE) ?? process.cwd();
+}
+
+function getCurrentAgentEndpoint(provider: AgentProvider): string | undefined {
+  if (provider === "deepseek-harness") {
+    return (
+      normalizeOptionalString(process.env.DEEPSEEK_HARNESS_WEB_URL) ??
+      normalizeOptionalString(process.env.DSH_WEB_URL)
+    );
+  }
+  return normalizeOptionalString(process.env.MARGENT_AGENT_ENDPOINT);
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
