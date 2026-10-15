@@ -32,15 +32,36 @@ const markdownPath = path.join(tempDir, "test.md");
 try {
   await fs.writeFile(markdownPath, "# Test\n", "utf8");
 
-  const macCodexCandidates = getCodexCommandCandidates("darwin");
+  const nestedCliSuffix = "/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+  const nestedChatGptCodexPath = `/Applications/ChatGPT.app${nestedCliSuffix}`;
+  const nestedLegacyCodexPath = `/Applications/Codex.app${nestedCliSuffix}`;
   const chatGptCodexPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
   const legacyCodexPath = "/Applications/Codex.app/Contents/Resources/codex";
-  assert.ok(macCodexCandidates.includes(chatGptCodexPath));
-  assert.ok(macCodexCandidates.includes(legacyCodexPath));
-  assert.ok(
-    macCodexCandidates.indexOf(chatGptCodexPath) <
-      macCodexCandidates.indexOf(legacyCodexPath)
-  );
+  const oldCodexCliPath = process.env.CODEX_CLI_PATH;
+  const oldPath = process.env.PATH;
+  try {
+    delete process.env.CODEX_CLI_PATH;
+    process.env.PATH = path.join(tempDir, "bin");
+    const macCodexCandidates = getCodexCommandCandidates("darwin");
+    assert.deepEqual(macCodexCandidates.slice(0, 4), [
+      nestedChatGptCodexPath,
+      chatGptCodexPath,
+      nestedLegacyCodexPath,
+      legacyCodexPath
+    ]);
+    assert.ok(!getCodexCommandCandidates("linux").includes(nestedChatGptCodexPath));
+    assert.ok(!getCodexCommandCandidates("win32").includes(nestedLegacyCodexPath));
+
+    for (const override of [chatGptCodexPath, legacyCodexPath, path.join(tempDir, "custom-codex")]) {
+      process.env.CODEX_CLI_PATH = override;
+      assert.equal(getCodexCommandCandidates("darwin")[0], override);
+    }
+  } finally {
+    if (oldCodexCliPath === undefined) delete process.env.CODEX_CLI_PATH;
+    else process.env.CODEX_CLI_PATH = oldCodexCliPath;
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+  }
 
   const adaptiveInstruction = createAgentSuccessorInstruction(markdownPath);
   assert.equal(adaptiveInstruction.provider, "custom-cli");

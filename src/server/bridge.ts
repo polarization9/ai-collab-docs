@@ -2127,26 +2127,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-let cachedCodexCommand: string | null | undefined;
-
-async function resolveCodexCommand(): Promise<string | null> {
+export async function resolveCodexCommand(
+  candidates = getCodexCommandCandidates()
+): Promise<string | null> {
   if (process.env.MARGENT_DISABLE_CODEX_BRIDGE === "1") {
     return null;
   }
 
-  if (cachedCodexCommand !== undefined) {
-    return cachedCodexCommand;
-  }
-
-  for (const candidate of getCodexCommandCandidates()) {
-    if (await pathExists(candidate)) {
-      cachedCodexCommand = candidate;
-      return cachedCodexCommand;
+  // Desktop updates can move the CLI while Margent is running.
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate, fs.constants.X_OK);
+      if ((await fs.stat(candidate)).isFile()) {
+        return candidate;
+      }
+    } catch {
+      continue;
     }
   }
 
-  cachedCodexCommand = null;
-  return cachedCodexCommand;
+  return null;
 }
 
 export function getCodexCommandCandidates(
@@ -2155,7 +2155,13 @@ export function getCodexCommandCandidates(
   const candidates = [
     normalizeOptionalString(process.env.CODEX_CLI_PATH),
     platform === "darwin"
+      ? "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+      : undefined,
+    platform === "darwin"
       ? "/Applications/ChatGPT.app/Contents/Resources/codex"
+      : undefined,
+    platform === "darwin"
+      ? "/Applications/Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
       : undefined,
     platform === "darwin"
       ? "/Applications/Codex.app/Contents/Resources/codex"

@@ -4,8 +4,16 @@
 
 2026-09-23 本机 Codex CLI `0.155.0-alpha.16` 位于
 `/Applications/ChatGPT.app/Contents/Resources/codex`。
-旧版应用路径 `/Applications/Codex.app/Contents/Resources/codex` 仍作为兼容候选，
-`CODEX_CLI_PATH` 优先于这两个候选，之后再查 PATH。
+2026-10-15 本机桌面版 `26.1007.71326` 内置 CLI `0.162.0-alpha.17.2` 已改为
+`/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`，
+原路径不存在，导致投递前检测失败。官方更新记录将 `26.1007` 列于 2026-10-08；
+本机应用与可执行文件变更时间集中在 2026-10-14 16:38（北京时间），
+可推断本机此时更新，但不能据此确认目录迁移首次出现的发布版本。
+
+检测顺序为 `CODEX_CLI_PATH`、ChatGPT.app 新旧布局、Codex.app 新旧布局、PATH。
+只接受可执行的普通文件；每次检测重新检查这些有限候选，不缓存成功或失败结果，
+避免桌面应用在 Margent 运行期间安装、升级或移除后仍沿用失效状态。
+不递归扫描应用目录，不改变会话绑定，也不自动重试失败批注。
 
 CLI 路径修复后，原投递方式仍在 `thread/resume` 阶段报错：
 `already has an active writer`。目标会话已经被桌面端持有，
@@ -47,7 +55,8 @@ thread-stream-following-changed v1 和 thread-stream-state-changed v11。
 
 ## 验证
 
-- `npm run check:codex-delivery`：模拟 IPC 分帧、新旧投递、busy、MCP 未写回、转发失败、在途重试、
+- `npm run check:codex-delivery`：CLI 新旧布局、安装后重新检测、升级迁移、移除及不可执行路径；
+  模拟 IPC 分帧、新旧投递、busy、MCP 未写回、转发失败、在途重试、
   真实中止、连接断开、协议不匹配、删除批注；验证旧磁盘状态不会使运行中的 turn 被误判为失败。
 - `npm run check:agent-binding`：四个 provider 的绑定回归。
 - 本机临时文档 smoke：桌面端持有目标会话时成功回复 `queue-smoke-ok`，event 为 handled。

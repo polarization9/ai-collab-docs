@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bindAgentSession } from "../src/server/agentLink.js";
-import { createBridgePrompt, sendAnnotationToAgent } from "../src/server/bridge.js";
+import { createBridgePrompt, resolveCodexCommand, sendAnnotationToAgent } from "../src/server/bridge.js";
 import { CodexDesktopClient, cleanCodexDiagnostic } from "../src/server/codexDesktopBridge.js";
 import { createAnnotation, loadReviewFile, updateAnnotationStatus, updateReviewEvent } from "../src/server/review.js";
 
@@ -123,11 +123,35 @@ const server = net.createServer((socket) => {
 });
 
 try {
+  delete process.env.MARGENT_DISABLE_CODEX_BRIDGE;
+  const legacyCli = path.join(dir, "ChatGPT.app", "Contents", "Resources", "codex");
+  const nestedCli = path.join(path.dirname(legacyCli), "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex");
+  const candidates = [nestedCli, legacyCli];
+  assert.equal(await resolveCodexCommand(candidates), null);
+  await fs.mkdir(path.dirname(nestedCli), { recursive: true });
+  await fs.writeFile(legacyCli, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  assert.equal(await resolveCodexCommand(candidates), legacyCli, "A previous miss must not prevent detection after install");
+  await fs.writeFile(nestedCli, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  assert.equal(await resolveCodexCommand(candidates), nestedCli, "Prefer the new CLI layout after an update");
+  await fs.rm(legacyCli);
+  assert.equal(await resolveCodexCommand(candidates), nestedCli);
+  await fs.rm(nestedCli);
+  assert.equal(await resolveCodexCommand(candidates), null, "Do not reuse a removed CLI path");
+  await fs.mkdir(nestedCli);
+  assert.equal(await resolveCodexCommand(candidates), null, "A directory is not an executable CLI");
+  await fs.rmdir(nestedCli);
+  await fs.writeFile(nestedCli, "not executable", { mode: 0o644 });
+  if (process.platform !== "win32") assert.equal(await resolveCodexCommand(candidates), null);
+
   await fs.mkdir(path.dirname(socketPath));
   await fs.copyFile(fileURLToPath(new URL("./fixtures/mock-codex-cli.mjs", import.meta.url)), path.join(dir, "codex"));
   await fs.chmod(path.join(dir, "codex"), 0o755);
   process.env.CODEX_HOME = dir;
   process.env.CODEX_CLI_PATH = path.join(dir, "codex");
+  assert.equal(await resolveCodexCommand(), process.env.CODEX_CLI_PATH);
+  process.env.MARGENT_DISABLE_CODEX_BRIDGE = "1";
+  assert.equal(await resolveCodexCommand(), null);
+  delete process.env.MARGENT_DISABLE_CODEX_BRIDGE;
   process.env.MARGENT_CODEX_TEST_STATE = stateFile;
   process.env.MARGENT_CODEX_TEST_LOG = logFile;
   delete process.env.MARGENT_DISABLE_CODEX_BRIDGE;
