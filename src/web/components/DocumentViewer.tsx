@@ -21,6 +21,7 @@ import {
 import type { Heading, HeadingLevel, ReviewDocument } from "../../shared/types";
 import { fetchDocumentAssetObjectUrl } from "../api";
 import { remarkPreserveExtraBlankLines } from "../markdown/remarkPreserveExtraBlankLines";
+import { remarkPreserveLineBreaks } from "../markdown/remarkPreserveLineBreaks";
 import { CodeBlock } from "./CodeBlock";
 import { ResizableTable } from "./ResizableTable";
 
@@ -191,7 +192,7 @@ export const DocumentViewer = memo(function DocumentViewer({ document }: Documen
   return (
     <article className="document-content">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkPreserveExtraBlankLines]}
+        remarkPlugins={[remarkGfm, remarkPreserveExtraBlankLines, remarkPreserveLineBreaks]}
         components={components}
       >
         {document.content}

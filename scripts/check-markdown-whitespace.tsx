@@ -10,20 +10,60 @@ import {
   EXTRA_BLANK_LINE_CLASS,
   remarkPreserveExtraBlankLines
 } from "../src/web/markdown/remarkPreserveExtraBlankLines";
+import { remarkPreserveLineBreaks } from "../src/web/markdown/remarkPreserveLineBreaks";
 
-function render(markdown: string): string {
+function render(markdown: string, preserveLineBreaks = true): string {
   return renderToStaticMarkup(
     createElement(
       ReactMarkdown,
-      { remarkPlugins: [remarkGfm, remarkPreserveExtraBlankLines] },
+      {
+        remarkPlugins: [
+          remarkGfm,
+          remarkPreserveExtraBlankLines,
+          ...(preserveLineBreaks ? [remarkPreserveLineBreaks] : [])
+        ]
+      },
       markdown
     )
   );
 }
 
 const softBreakHtml = render("first line\nsecond line");
-assert.ok(softBreakHtml.includes("first line\nsecond line"));
-assert.ok(!softBreakHtml.includes("<br"));
+assert.equal(softBreakHtml, "<p>first line<br/>\nsecond line</p>");
+
+const lineBreakCases = [
+  { markdown: "- first line\n  second line", breaks: 1 },
+  { markdown: "1. first line\n   second line", breaks: 1 },
+  { markdown: "- first paragraph\n  second line\n\n  next paragraph", breaks: 1 },
+  { markdown: "- **parent**\n\n  - child\n  - another child\n\n- next parent", breaks: 0 },
+  { markdown: "- parent\n  - first line\n    second line", breaks: 1 },
+  { markdown: "- **first**\n  **second**", breaks: 1 },
+  { markdown: "**first\nsecond** and [link\nlabel](https://example.com)", breaks: 2 },
+  { markdown: "> first line\n> second line", breaks: 1 },
+  { markdown: "- [ ] first line\n  second line\n- [x] done", breaks: 1 },
+  { markdown: "first line  \nsecond line\\\nthird line\nfourth line", breaks: 3 },
+  { markdown: "first line\r\nsecond line", breaks: 1 },
+  { markdown: "first line\rsecond line", breaks: 1 },
+  { markdown: "- first line\r  second line", breaks: 1 },
+  { markdown: "1. first line\r   second line", breaks: 1 },
+  { markdown: "> first line\r> second line", breaks: 1 },
+  { markdown: "**first\rsecond**", breaks: 1 },
+  { markdown: "first\rsecond\r\nthird\nfourth", breaks: 3 },
+  { markdown: "- **parent**\r\r  - child\r  - another child\r\r- next parent", breaks: 0 },
+  { markdown: "```text\rfirst line\rsecond line\r```", breaks: 0 },
+  { markdown: "# first line\n\n```text\nfirst line\nsecond line\n```", breaks: 0 },
+  { markdown: "`first\nsecond`\nnext line", breaks: 1 }
+];
+
+for (const { markdown, breaks } of lineBreakCases) {
+  const html = render(markdown);
+  assert.equal((html.match(/<br\/>/g) ?? []).length, breaks, markdown);
+  const textHtml = html.replace(/<br\/>/g, "");
+  const originalTextHtml = render(markdown, false).replace(/<br\/>/g, "");
+  // Break nodes emit LF; CR may become LF, but text lengths and block structure must stay stable.
+  assert.equal(textHtml.length, originalTextHtml.length, markdown);
+  assert.equal(textHtml.replace(/\r/g, "\n"), originalTextHtml.replace(/\r/g, "\n"), markdown);
+}
 
 const normalParagraphGapHtml = render("first paragraph\n\nsecond paragraph");
 assert.equal(countExtraBlankLines(normalParagraphGapHtml), 0);
@@ -49,7 +89,7 @@ const documentHtml = renderToStaticMarkup(
     document: createReviewDocument(documentContent, parsedDocument.headings)
   })
 );
-assert.ok(documentHtml.includes("first line\nsecond line"));
+assert.ok(documentHtml.includes("first line<br/>\nsecond line"));
 assert.equal(countExtraBlankLines(documentHtml), 2);
 assert.equal(
   documentHtml.match(/data-review-block-id=/g)?.length ?? 0,

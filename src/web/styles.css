@@ -1556,7 +1556,6 @@ select {
 .document-content p,
 .document-content li {
   font-size: 16px;
-  white-space: pre-line;
 }
 
 .document-content p {
