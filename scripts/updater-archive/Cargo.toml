@@ -1,0 +1,11 @@
+[package]
+name = "margent-updater-archive"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Match the archive libraries in src-tauri/Cargo.lock.
+flate2 = "=1.1.9"
+tar = "=0.4.46"
+tempfile = "=3.27.0"

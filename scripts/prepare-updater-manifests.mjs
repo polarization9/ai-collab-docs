@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
@@ -6,6 +7,10 @@ const repoRoot = process.cwd();
 const tauriConfigPath = path.join(repoRoot, "src-tauri", "tauri.conf.json");
 const bundleDir = path.join(repoRoot, "src-tauri", "target", "release", "bundle");
 const macosBundleDir = path.join(bundleDir, "macos");
+
+execFileSync(process.execPath, [path.join(repoRoot, "scripts/updater-archive.mjs"), "check"], {
+  stdio: "inherit"
+});
 
 const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, "utf8"));
 const version = process.env.MARGENT_RELEASE_VERSION || tauriConfig.version;
@@ -16,6 +21,7 @@ const notes =
 const pubDate = process.env.MARGENT_RELEASE_PUB_DATE || new Date().toISOString();
 const signaturePath = path.join(macosBundleDir, "Margent.app.tar.gz.sig");
 const signature = fs.readFileSync(signaturePath, "utf8").trim();
+const revision = process.env.MARGENT_RELEASE_REVISION;
 
 const githubBaseUrl =
   process.env.MARGENT_GITHUB_RELEASE_BASE_URL ||
@@ -32,6 +38,8 @@ console.log(`- ${path.join(macosBundleDir, "latest.github.json")}`);
 console.log(`- ${path.join(macosBundleDir, "latest.mirror.json")}`);
 
 function writeManifest(fileName, url) {
+  const downloadUrl = new URL(url);
+  if (revision) downloadUrl.searchParams.set("revision", revision);
   const manifest = {
     version,
     notes,
@@ -39,7 +47,7 @@ function writeManifest(fileName, url) {
     platforms: {
       "darwin-aarch64": {
         signature,
-        url
+        url: downloadUrl.href
       }
     }
   };
