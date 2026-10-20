@@ -5,6 +5,8 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
 };
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -54,6 +56,11 @@ fn pack(app: &Path, output: &Path) -> Result<()> {
     }
     let extracted = tempfile::tempdir()?;
     extract_for_updater(archive_file.path(), extracted.path())?;
+    // NamedTempFile defaults to 0600; published archives must be readable by the download server.
+    #[cfg(unix)]
+    archive_file
+        .as_file()
+        .set_permissions(fs::Permissions::from_mode(0o644))?;
     archive_file.persist(output)?;
     Ok(())
 }
@@ -136,6 +143,15 @@ mod tests {
             fs::read_link(output.path().join("Contents/MacOS/alias")).unwrap(),
             Path::new("Margent")
         );
+    }
+
+    #[test]
+    fn archive_permissions_allow_public_downloads() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = app_fixture(temp.path());
+        let archive = temp.path().join("app.tar.gz");
+        pack(&app, &archive).unwrap();
+        assert_eq!(fs::metadata(archive).unwrap().permissions().mode() & 0o777, 0o644);
     }
 
     #[test]
