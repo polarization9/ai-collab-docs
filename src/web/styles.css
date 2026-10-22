@@ -3115,6 +3115,7 @@ body.table-column-resizing {
 }
 
 .annotation-thread-message {
+  overflow-wrap: anywhere;
   padding: 8px 6px;
 }
 
@@ -3156,6 +3157,7 @@ body.table-column-resizing {
   color: var(--color-danger);
   font-size: 13px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
   padding: 6px 8px;
 }
 
@@ -3588,6 +3590,16 @@ body.table-column-resizing {
   gap: 10px;
 }
 
+/* Single-column tracks must not grow to a reply's longest unbroken text. */
+.annotation-list,
+.annotation-card,
+.annotation-card-main,
+.annotation-thread,
+.annotation-replies,
+.annotation-reply {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .annotation-card {
   position: relative;
   display: grid;
@@ -3644,6 +3656,7 @@ body.table-column-resizing {
   color: var(--color-ink);
   font-size: 13px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
@@ -3802,6 +3815,7 @@ body.table-column-resizing {
   color: var(--color-danger);
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
   padding: 8px;
 }
 
@@ -3870,6 +3884,7 @@ body.table-column-resizing {
   position: relative;
   display: grid;
   gap: 6px;
+  overflow-wrap: anywhere;
   border: 0;
   border-radius: 7px;
   background: color-mix(in srgb, var(--color-paper) 90%, var(--surface-control-muted));
@@ -3890,6 +3905,7 @@ body.table-column-resizing {
 
 .annotation-reply-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   color: var(--color-muted);
@@ -3922,6 +3938,7 @@ body.table-column-resizing {
 
 .annotation-reply-mention {
   display: inline-flex;
+  max-width: 100%;
   align-items: center;
   margin-right: 5px;
   border-radius: 5px;
@@ -3931,7 +3948,7 @@ body.table-column-resizing {
   font-weight: 850;
   line-height: 1;
   padding: 3px 5px;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .annotation-reply-target {

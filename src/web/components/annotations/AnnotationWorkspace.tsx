@@ -131,6 +131,10 @@ export function AnnotationWorkspace({
 }: AnnotationWorkspaceProps) {
   const { t } = useI18n();
   const contentRef = useRef<HTMLElement | null>(null);
+  const lastCapturedSelectionRef = useRef<Pick<
+    Range,
+    "startContainer" | "startOffset" | "endContainer" | "endOffset"
+  > | null>(null);
   const editorRef = useRef<MarkdownSourceEditorHandle | null>(null);
   const pendingEditorAnchorRef = useRef<SwitchAnchor | null>(null);
   const pendingReadingAnchorRef = useRef<SwitchAnchor | null>(null);
@@ -553,8 +557,24 @@ export function AnnotationWorkspace({
         return;
       }
       const nextDraft = captureAnnotationDraft(container, document.headings);
+      const range = nextDraft ? window.getSelection()?.getRangeAt(0) : null;
+      const previousSelection = lastCapturedSelectionRef.current;
+      const hasNewSelection = Boolean(range && (
+        !previousSelection ||
+        range.startContainer !== previousSelection.startContainer ||
+        range.startOffset !== previousSelection.startOffset ||
+        range.endContainer !== previousSelection.endContainer ||
+        range.endOffset !== previousSelection.endOffset
+      ));
+      // Global mouse/key events may retain the old selection when a toolbar button is clicked.
+      lastCapturedSelectionRef.current = range ? {
+        startContainer: range.startContainer,
+        startOffset: range.startOffset,
+        endContainer: range.endContainer,
+        endOffset: range.endOffset
+      } : null;
       setDraft(nextDraft);
-      if (nextDraft) {
+      if (nextDraft && hasNewSelection) {
         setIsSidebarOpen(false);
       }
     }, 0);
@@ -981,6 +1001,7 @@ export function AnnotationWorkspace({
   };
 
   useEffect(() => {
+    lastCapturedSelectionRef.current = null;
     setThreadPopover(null);
     setLocallyPendingAnnotationIds([]);
   }, [document.id, isEditing]);
