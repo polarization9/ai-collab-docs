@@ -1,6 +1,6 @@
 {
   "name": "margent",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -22,6 +22,7 @@
     "check:agent-binding": "tsx scripts/check-agent-binding.ts",
     "check:codex-delivery": "tsx scripts/check-codex-delivery.ts",
     "check:updater-archive": "node scripts/updater-archive.mjs test",
+    "check:update-popover": "node scripts/check-update-popover.mjs",
     "check:release": "npm run typecheck && npm run check:i18n-copy && npm run check:anchor-repair && npm run check:heading-navigation && npm run check:markdown-whitespace && npm run check:agent-binding && npm run check:codex-delivery && npm run check:updater-archive && npm run tauri:build && git diff --check",
     "desktop:runtime": "node scripts/build-desktop-runtime.mjs",
     "desktop:sidecar": "npm run build:server && npm run desktop:runtime && node scripts/build-desktop-sidecar.mjs",

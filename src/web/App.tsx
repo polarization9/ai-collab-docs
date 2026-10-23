@@ -1,12 +1,9 @@
 import {
   Clock3,
-  Download,
   FilePlus2,
   FileText,
   PanelLeftOpen,
   Plus,
-  RefreshCw,
-  RotateCw,
   Settings2,
   X
 } from "lucide-react";
@@ -26,6 +23,7 @@ import {
   updateAppSettings
 } from "./api";
 import { AnnotationWorkspace } from "./components/annotations/AnnotationWorkspace";
+import { AppUpdateButton } from "./components/AppUpdateButton";
 import { Toc } from "./components/Toc";
 import {
   getInitialOpenedFiles,
@@ -39,11 +37,10 @@ import {
   preloadMarkdownFilePicker,
   startWindowDrag
 } from "./desktop";
-import { I18nProvider, useI18n, type LocaleKey } from "./i18n";
+import { I18nProvider, useI18n } from "./i18n";
 import {
   checkForAppUpdate,
   downloadAndInstallAppUpdate,
-  getDistributionChannel,
   isAppUpdaterSupported,
   relaunchApp,
   shouldAutoCheckForUpdates,
@@ -842,148 +839,6 @@ function DocumentTabs({
       </button>
     </div>
   );
-}
-
-function AppUpdateButton({
-  state,
-  autoCheckEnabled,
-  onCheck,
-  onInstall,
-  onRelaunch
-}: {
-  state: AppUpdateState;
-  autoCheckEnabled: boolean;
-  onCheck: () => Promise<void>;
-  onInstall: () => Promise<void>;
-  onRelaunch: () => Promise<void>;
-}) {
-  const { t } = useI18n();
-  const [isOpen, setIsOpen] = useState(false);
-  if (getDistributionChannel() === "mas") {
-    return null;
-  }
-
-  const busy = state.status === "checking" || state.status === "downloading";
-  const hasBadge = state.status === "available" || state.status === "ready-to-restart";
-  const title = getUpdateTitle(state, t);
-
-  const handleClick = () => {
-    if (state.status === "unsupported" || state.status === "available" || busy) {
-      setIsOpen((current) => !current);
-      return;
-    }
-    if (state.status === "ready-to-restart") {
-      setIsOpen((current) => !current);
-      return;
-    }
-
-    setIsOpen(true);
-    void onCheck();
-  };
-
-  return (
-    <div className="document-tab-update" data-no-window-drag>
-      <button
-        type="button"
-        className={`document-tab-update-button${busy ? " document-tab-update-button-busy" : ""}`}
-        aria-label={title}
-        title={title}
-        onClick={handleClick}
-      >
-        {state.status === "available" || state.status === "ready-to-restart" ? (
-          <Download size={15} />
-        ) : state.status === "checking" || state.status === "downloading" ? (
-          <RotateCw size={15} />
-        ) : (
-          <RefreshCw size={15} />
-        )}
-        {hasBadge ? <span className="document-tab-update-badge" /> : null}
-      </button>
-      {isOpen ? (
-        <div className="document-tab-update-popover" role="status">
-          <div className="document-tab-update-title">{title}</div>
-          <p>{getUpdateDescription(state, autoCheckEnabled, t)}</p>
-          {state.status === "available" ? (
-            <button type="button" onClick={() => void onInstall()}>
-              {t("updates.downloadInstall")}
-            </button>
-          ) : null}
-          {state.status === "ready-to-restart" ? (
-            <button type="button" onClick={() => void onRelaunch()}>
-              {t("updates.restart")}
-            </button>
-          ) : null}
-          {state.status === "error" ? (
-            <button type="button" onClick={() => void onCheck()}>
-              {t("updates.retry")}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function getUpdateTitle(
-  state: AppUpdateState,
-  t: (key: LocaleKey) => string
-): string {
-  switch (state.status) {
-    case "checking":
-      return t("updates.checking");
-    case "available":
-      return t("updates.available");
-    case "not-available":
-      return t("updates.notAvailable");
-    case "downloading":
-      return t("updates.downloading");
-    case "ready-to-restart":
-      return t("updates.readyToRestart");
-    case "error":
-      return t("updates.error");
-    case "unsupported":
-      return t("updates.unsupported");
-    case "idle":
-    default:
-      return t("updates.check");
-  }
-}
-
-function getUpdateDescription(
-  state: AppUpdateState,
-  autoCheckEnabled: boolean,
-  t: (key: LocaleKey, params?: Record<string, string | number>) => string
-): string {
-  switch (state.status) {
-    case "available":
-      return t("updates.availableDescription", { version: state.version });
-    case "not-available":
-      return t("updates.notAvailableDescription");
-    case "downloading":
-      return formatUpdateProgress(state, t);
-    case "ready-to-restart":
-      return t("updates.readyToRestartDescription", { version: state.version });
-    case "error":
-      return state.message;
-    case "unsupported":
-      return t("updates.unsupportedDescription");
-    case "checking":
-      return t("updates.checkingDescription");
-    case "idle":
-    default:
-      return autoCheckEnabled ? t("updates.idleDescription") : t("updates.autoOffDescription");
-  }
-}
-
-function formatUpdateProgress(
-  state: Extract<AppUpdateState, { status: "downloading" }>,
-  t: (key: LocaleKey, params?: Record<string, string | number>) => string
-): string {
-  if (!state.total) {
-    return t("updates.downloadingDescription");
-  }
-  const percent = Math.min(100, Math.round((state.downloaded / state.total) * 100));
-  return t("updates.downloadingPercent", { percent });
 }
 
 function isDocumentTabControl(target: EventTarget | null): boolean {
