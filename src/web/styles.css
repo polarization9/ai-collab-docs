@@ -1553,6 +1553,8 @@ select {
   font-size: 18px;
 }
 
+.document-content h5,
+.document-content h6,
 .document-content p,
 .document-content li {
   font-size: 16px;
